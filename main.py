@@ -1,14 +1,14 @@
-from fastapi import FastAPI, Response, HTTPException, Request
+from fastapi import FastAPI, Response, Request
 import cloudscraper
 import urllib3
 import json
 import re
 from bs4 import BeautifulSoup
-from urllib.parse import urlparse, urljoin
+from urllib.parse import urlparse
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-app = FastAPI(title="Justin M3U Cloudflare Bypass Proxy", version="19.0")
+app = FastAPI(title="Justin M3U Direct Generator", version="20.0")
 
 DOMAIN_API_URL = "https://data-reality.com/domain.php"
 MATCHES_API_URL = "https://data-reality.com/matches.php"
@@ -402,7 +402,6 @@ def parse_matches_from_html(html_content):
             else:
                 league = event_text
             
-            teams_draw = detail_div.find('div', class_='teams')
             teams_div = detail_div.find('div', class_='teams')
             if teams_div:
                 home_team = teams_div.find('div', class_='home')
@@ -474,51 +473,11 @@ def parse_channels_from_html(html_content):
 def home():
     return {"status": "online", "endpoints": ["/playlist.m3u"]}
 
-# 🔥 CLOUDFLARE BYPASS PROXY: Artık requests yerine CLOUDSCRAPER kullanıyor!
-@app.get("/stream/{channel_id}/{file_path:path}")
-def proxy_full_stream(channel_id: str, file_path: str, request: Request):
-    player_base = get_dynamic_player_base()
-    stream_base_url = get_stream_base_url(player_base)
-    
-    target_url = f"{stream_base_url}{channel_id}/{file_path}"
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Referer": player_base,
-        "Origin": player_base.rstrip('/')
-    }
-    
-    # cloudscraper kullanarak Cloudflare duvarını delelim
-    scraper = cloudscraper.create_scraper()
-    
-    try:
-        if file_path.endswith('.m3u8') or '.m3u8' in file_path:
-            resp = scraper.get(target_url, headers=headers, timeout=10)
-            content = resp.text
-            
-            base_proxy_url = str(request.base_url) + f"stream/{channel_id}/"
-            
-            lines = content.splitlines()
-            new_lines = []
-            for line in lines:
-                if line and not line.startswith('#'):
-                    if not line.startswith('http'):
-                        line = base_proxy_url + line
-                new_lines.append(line)
-                
-            return Response(content="\n".join(new_lines), media_type="application/vnd.apple.mpegurl")
-        
-        # Segment dosyaları (.ts, .m4s vb.) için cloudscraper ile akış
-        req = scraper.get(target_url, headers=headers, stream=True, timeout=15)
-        return Response(content=req.content, status_code=req.status_code, media_type=req.headers.get("content-type"))
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
 @app.get("/playlist.m3u")
 def generate_m3u(request: Request):
     scraper = cloudscraper.create_scraper()
     player_base = get_dynamic_player_base()
+    stream_base_url = get_stream_base_url(player_base)
     
     all_matches = []
     all_channels = parse_channels_from_html(STATIC_CHANNELS_HTML)
@@ -531,17 +490,20 @@ def generate_m3u(request: Request):
         print(f"⚠️ Maç hatası: {e}")
         
     m3u_list = ["#EXTM3U"]
-    base_url = str(request.base_url).rstrip('/')
+    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     
     for match in all_matches:
         group = f"CANLI MAÇLAR - {match['league']}"
         extinf = f'#EXTINF:-1 tvg-logo="{match["main_logo"]}" group-title="{group}",{match["name"]}'
         m3u_list.append(extinf)
-        m3u_list.append(f'{base_url}/stream/{match["id"]}/mono.m3u8')
+        # Doğrudan oynatıcının Cloudflare'a takılmadan bağlanacağı pipe formatı
+        stream_link = f"{stream_base_url}{match['id']}/mono.m3u8|Referer={player_base}&User-Agent={user_agent}"
+        m3u_list.append(stream_link)
         
     for channel in all_channels:
         extinf = f'#EXTINF:-1 tvg-logo="{channel["logo"]}" group-title="7/24 KANALLAR",{channel["name"]}'
         m3u_list.append(extinf)
-        m3u_list.append(f'{base_url}/stream/{channel["id"]}/mono.m3u8')
+        stream_link = f"{stream_base_url}{channel['id']}/mono.m3u8|Referer={player_base}&User-Agent={user_agent}"
+        m3u_list.append(stream_link)
         
     return Response(content="\n".join(m3u_list), media_type="audio/x-mpegurl")
