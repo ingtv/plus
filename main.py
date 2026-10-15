@@ -2,14 +2,14 @@ from fastapi import FastAPI, Response
 import requests
 import urllib3
 import json
+import re
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, urljoin
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-app = FastAPI(title="Justin M3U Generator", version="4.0")
+app = FastAPI(title="Justin M3U Generator", version="5.0")
 
-# Güncel domain adresinin bulunduğu Sitemap kaynağı
 SITEMAP_URL = "https://raw.githubusercontent.com/eniyiyayinci/taraftarium-amp/refs/heads/main/sitemap.xml"
 
 HEADERS = {
@@ -17,26 +17,51 @@ HEADERS = {
     "Referer": "https://canlimacizlejustin.online/"
 }
 
-def get_live_urls():
-    """Sitemap XML dosyasından güncel domain adresini okur"""
-    base_url = "https://taraftarium24.io/"
+def get_dynamic_base_url():
+    """Sitemap'ten ana adresi alır, oradan da sürekli değişen gerçek yayın domainine (xyz vb.) ulaşırsınız"""
+    fallback_url = "https://taraftarium24.io/"
     
     try:
-        print("🔍 Sitemap üzerinden güncel domain sorgulanıyor...")
+        # 1. Adım: Sitemap'ten ana domaini bul
+        print("🔍 Sitemap okunuyor...")
         r = requests.get(SITEMAP_URL, headers=HEADERS, timeout=10, verify=False)
         if r.status_code == 200:
-            soup = BeautifulSoup(r.text, 'xml') # XML parser kullanıyoruz
+            soup = BeautifulSoup(r.text, 'xml')
             loc_tag = soup.find('loc')
             if loc_tag and loc_tag.text:
-                parsed = urlparse(loc_tag.text.strip())
-                if parsed.netloc:
-                    base_url = f"{parsed.scheme}://{parsed.netloc}/"
-                    print(f"✅ Sitemap'ten alınan güncel domain: {base_url}")
-                    return base_url
-    except Exception as e:
-        print(f"⚠️ Sitemap okuma hatası: {e}")
+                fallback_url = loc_tag.text.strip()
         
-    return base_url
+        print(f"📡 Ana giriş adresi: {fallback_url}")
+
+        # 2. Adım: Ana adrese istek atıp gerçek yönlendirildiği (xyz vb.) domaini yakala
+        print("🔍 Güncel yayın domaini çözümleniyor...")
+        r_main = requests.get(fallback_url, headers=HEADERS, timeout=10, verify=False, allow_redirects=True)
+        
+        # Gerçek son yönlendirildiği URL (Örn: https://taraftarium1086.xyz/)
+        final_url = r_main.url
+        parsed_final = urlparse(final_url)
+        if parsed_final.netloc:
+            base_url = f"{parsed_final.scheme}://{parsed_final.netloc}/"
+            print(f"✅ Yakalanan güncel yayın domaini: {base_url}")
+            return base_url
+
+        # Eğer redirect yakalanamazsa sayfadaki script veya linklerden regex ile bulmaya çalış
+        soup_main = BeautifulSoup(r_main.text, 'html.parser')
+        for script in soup_main.find_all('script'):
+            if script.string:
+                urls = re.findall(r'https?://[^\s<>"]+', script.string)
+                for u in urls:
+                    if 'taraftarium' in u or '.xyz' in u or '.com' in u:
+                        parsed_u = urlparse(u)
+                        if parsed_u.netloc:
+                            base_url = f"{parsed_u.scheme}://{parsed_u.netloc}/"
+                            print(f"✅ Script içinden bulunan yayın domaini: {base_url}")
+                            return base_url
+
+    except Exception as e:
+        print(f"⚠️ Domain çözümleme hatası: {e}")
+        
+    return fallback_url
 
 def parse_matches_from_html(html_content):
     matches = []
@@ -144,7 +169,7 @@ def home():
 
 @app.get("/playlist.m3u")
 def generate_m3u():
-    base_url = get_live_urls()
+    base_url = get_dynamic_base_url()
     matches_url = urljoin(base_url, "matches.php")
     channels_url = urljoin(base_url, "channels.php")
     
@@ -184,7 +209,7 @@ def generate_m3u():
 
 @app.get("/detay.json")
 def generate_json():
-    base_url = get_live_urls()
+    base_url = get_dynamic_base_url()
     matches_url = urljoin(base_url, "matches.php")
     channels_url = urljoin(base_url, "channels.php")
     
