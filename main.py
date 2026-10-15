@@ -8,9 +8,9 @@ from urllib.parse import urlparse, urljoin
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-app = FastAPI(title="Justin M3U Generator", version="7.0")
+app = FastAPI(title="Justin M3U Generator", version="8.0")
 
-# Güncel domainin doğrudan içine yazıldığı landing index kaynağı
+# Güncel ana domainin çekileceği index kaynağı
 INDEX_SOURCE_URL = "https://raw.githubusercontent.com/eniyiyayinci/taraftarium-amp/refs/heads/main/index.html"
 
 HEADERS = {
@@ -18,28 +18,46 @@ HEADERS = {
     "Referer": "https://canlimacizlejustin.online/"
 }
 
-def get_dynamic_base_url():
-    """index.html içerisindeki .primary class'ına sahip linkten güncel domaini alır"""
-    fallback_url = "https://taraftarium24.io/"
+def get_dynamic_endpoints():
+    """index.html'den güncel base URL'i alır ve orijinal API endpoint'lerini türetir"""
+    base_url = "https://taraftarium24.io/"
     
     try:
         print("🔍 index.html kaynağı okunuyor...")
         r = requests.get(INDEX_SOURCE_URL, headers=HEADERS, timeout=10, verify=False)
         if r.status_code == 200:
             soup = BeautifulSoup(r.text, 'html.parser')
-            # <a href="https://taraftarium1086.xyz/" class="primary" ...> etiketini bul
             primary_link = soup.find('a', class_='primary')
             if primary_link and primary_link.get('href'):
                 href = primary_link.get('href').strip()
                 parsed = urlparse(href)
                 if parsed.netloc:
                     base_url = f"{parsed.scheme}://{parsed.netloc}/"
-                    print(f"✅ index.html içinden yakalanan güncel domain: {base_url}")
-                    return base_url
+                    print(f"✅ Dinamik Base URL yakalandı: {base_url}")
     except Exception as e:
-        print(f"⚠️ Domain çözümleme hatası: {e}")
-        
-    return fallback_url
+        print(f"⚠️ Domain çözümleme hatası: {e}, varsayılan kullanılıyor.")
+    
+    # Orijinal API yapılarına göre endpoint'leri dinamik olarak oluşturuyoruz
+    domain_api = urljoin(base_url, "domain.php")
+    matches_api = urljoin(base_url, "matches.php")
+    channels_api = urljoin(base_url, "channels.php")
+    
+    return base_url, domain_api, matches_api, channels_api
+
+def get_base_url_with_fallback(domain_api_url, default_base):
+    """Domain API'sini kullanarak asıl base URL'i doğrula"""
+    try:
+        r = requests.get(domain_api_url, headers=HEADERS, timeout=10, verify=False)
+        data = r.json()
+        base_url = data.get("baseurl", "")
+        if base_url:
+            base_url = base_url.replace("\\", "").rstrip('/')
+            print(f"✅ Domain API'den base URL alındı: {base_url}")
+            return base_url + "/"
+    except Exception as e:
+        print(f"⚠️ Domain API hatası: {e}")
+    
+    return default_base
 
 def parse_matches_from_html(html_content):
     matches = []
@@ -149,22 +167,21 @@ def home():
 
 @app.get("/playlist.m3u")
 def generate_m3u():
-    base_url = get_dynamic_base_url()
-    matches_url = urljoin(base_url, "matches.php")
-    channels_url = urljoin(base_url, "channels.php")
+    base_dynamic, domain_api, matches_api, channels_api = get_dynamic_endpoints()
+    base_url = get_base_url_with_fallback(domain_api, base_dynamic)
     
     all_matches = []
     all_channels = []
     
     try:
-        r = requests.get(matches_url, headers=HEADERS, timeout=15, verify=False)
+        r = requests.get(matches_api, headers=HEADERS, timeout=15, verify=False)
         print(f"📡 Matches API Status: {r.status_code}")
         all_matches = parse_matches_from_html(r.text)
     except Exception as e:
         print(f"⚠️ Maç hatası: {e}")
         
     try:
-        r = requests.get(channels_url, headers=HEADERS, timeout=15, verify=False)
+        r = requests.get(channels_api, headers=HEADERS, timeout=15, verify=False)
         print(f"📡 Channels API Status: {r.status_code}")
         all_channels = parse_channels_from_html(r.text)
     except Exception as e:
@@ -191,21 +208,20 @@ def generate_m3u():
 
 @app.get("/detay.json")
 def generate_json():
-    base_url = get_dynamic_base_url()
-    matches_url = urljoin(base_url, "matches.php")
-    channels_url = urljoin(base_url, "channels.php")
+    base_dynamic, domain_api, matches_api, channels_api = get_dynamic_endpoints()
+    base_url = get_base_url_with_fallback(domain_api, base_dynamic)
     
     all_matches = []
     all_channels = []
     
     try:
-        r = requests.get(matches_url, headers=HEADERS, timeout=15, verify=False)
+        r = requests.get(matches_api, headers=HEADERS, timeout=15, verify=False)
         all_matches = parse_matches_from_html(r.text)
     except Exception as e:
         print(f"⚠️ JSON Maç hatası: {e}")
         
     try:
-        r = requests.get(channels_url, headers=HEADERS, timeout=15, verify=False)
+        r = requests.get(channels_api, headers=HEADERS, timeout=15, verify=False)
         all_channels = parse_channels_from_html(r.text)
     except Exception as e:
         print(f"⚠️ JSON Kanal hatası: {e}")
