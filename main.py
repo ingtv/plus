@@ -5,11 +5,10 @@ import json
 import re
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, urljoin
-import requests
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-app = FastAPI(title="Justin M3U Full Proxy Generator", version="18.0")
+app = FastAPI(title="Justin M3U Cloudflare Bypass Proxy", version="19.0")
 
 DOMAIN_API_URL = "https://data-reality.com/domain.php"
 MATCHES_API_URL = "https://data-reality.com/matches.php"
@@ -403,6 +402,7 @@ def parse_matches_from_html(html_content):
             else:
                 league = event_text
             
+            teams_draw = detail_div.find('div', class_='teams')
             teams_div = detail_div.find('div', class_='teams')
             if teams_div:
                 home_team = teams_div.find('div', class_='home')
@@ -474,7 +474,7 @@ def parse_channels_from_html(html_content):
 def home():
     return {"status": "online", "endpoints": ["/playlist.m3u"]}
 
-# 🔥 ŞEFFAF FULL PROXY ENDPOINT: ExoPlayer'dan gelen m3u8 ve segment isteklerini header ekleyerek akıtır
+# 🔥 CLOUDFLARE BYPASS PROXY: Artık requests yerine CLOUDSCRAPER kullanıyor!
 @app.get("/stream/{channel_id}/{file_path:path}")
 def proxy_full_stream(channel_id: str, file_path: str, request: Request):
     player_base = get_dynamic_player_base()
@@ -488,13 +488,14 @@ def proxy_full_stream(channel_id: str, file_path: str, request: Request):
         "Origin": player_base.rstrip('/')
     }
     
+    # cloudscraper kullanarak Cloudflare duvarını delelim
+    scraper = cloudscraper.create_scraper()
+    
     try:
-        # Eğer istenen dosya bir .m3u8 playlist dosyası ise
         if file_path.endswith('.m3u8') or '.m3u8' in file_path:
-            resp = requests.get(target_url, headers=headers, timeout=10)
+            resp = scraper.get(target_url, headers=headers, timeout=10)
             content = resp.text
             
-            # Playlist içindeki alt satırların yollarını bizim proxy endpoint'imize çevirelim
             base_proxy_url = str(request.base_url) + f"stream/{channel_id}/"
             
             lines = content.splitlines()
@@ -507,8 +508,8 @@ def proxy_full_stream(channel_id: str, file_path: str, request: Request):
                 
             return Response(content="\n".join(new_lines), media_type="application/vnd.apple.mpegurl")
         
-        # Eğer istenen dosya bir video parçası (.ts, .m4s vb.) veya anahtar dosyası ise akış olarak ilet
-        req = requests.get(target_url, headers=headers, stream=True, timeout=15)
+        # Segment dosyaları (.ts, .m4s vb.) için cloudscraper ile akış
+        req = scraper.get(target_url, headers=headers, stream=True, timeout=15)
         return Response(content=req.content, status_code=req.status_code, media_type=req.headers.get("content-type"))
         
     except Exception as e:
