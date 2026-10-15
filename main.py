@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Response, HTTPException
+from fastapi import FastAPI, Response, HTTPException, Request
 import cloudscraper
 import urllib3
 import json
@@ -9,7 +9,7 @@ import requests
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-app = FastAPI(title="Justin M3U Proxy Generator", version="16.0")
+app = FastAPI(title="Justin M3U Proxy Generator", version="16.1")
 
 DOMAIN_API_URL = "https://data-reality.com/domain.php"
 MATCHES_API_URL = "https://data-reality.com/matches.php"
@@ -423,6 +423,8 @@ def parse_matches_from_html(html_content):
                         'name': channel_name,
                         'home': home,
                         'away': away,
+                        'home_logo': home_logo,
+                        'away_logo': away_logo,
                         'main_logo': main_logo,
                         'league': league,
                         'type': match_type.lower(),
@@ -470,11 +472,10 @@ def parse_channels_from_html(html_content):
 
 @app.get("/")
 def home():
-    return {"status": "online", "endpoints": ["/playlist.m3u", "/detay.json"]}
+    return {"status": "online", "endpoints": ["/playlist.m3u"]}
 
-# 🔥 PROXY ENDPOINT: ExoPlayer doğrudan buraya bağlanacak, sunucumuz arkada her şeyi çözecek!
 @app.get("/proxy/{channel_id}/{file_name}")
-def proxy_stream(channel_id: str, file_name: str, request: fastapi.Request = None):
+def proxy_stream(channel_id: str, file_name: str, request: Request):
     player_base = get_dynamic_player_base()
     stream_base_url = get_stream_base_url(player_base)
     target_url = f"{stream_base_url}{channel_id}/{file_name}"
@@ -486,12 +487,10 @@ def proxy_stream(channel_id: str, file_name: str, request: fastapi.Request = Non
     }
     
     try:
-        # Eğer istek .m3u8 dosyası ise içeriğini çekip içindeki linkleri de proxy üzerinden yönlendirelim
         if file_name.endswith('.m3u8'):
             resp = requests.get(target_url, headers=headers, timeout=10)
             content = resp.text
-            # m3u8 içindeki segment (ts/m4s) linklerini de proxy'ye yönlendir
-            base_proxy_url = f"{request.base_url}proxy/{channel_id}/"
+            base_proxy_url = str(request.base_url) + f"proxy/{channel_id}/"
             
             lines = content.splitlines()
             new_lines = []
@@ -499,14 +498,10 @@ def proxy_stream(channel_id: str, file_name: str, request: fastapi.Request = Non
                 if line and not line.startswith('#'):
                     if not line.startswith('http'):
                         line = base_proxy_url + line
-                    else:
-                        # Eğer tam URL ise onu da proxy'den geçirebiliriz veya direkt bırakabiliriz
-                        pass
                 new_lines.append(line)
             
             return Response(content="\n".join(new_lines), media_type="application/vnd.apple.mpegurl")
         
-        # Eğer parça dosyası (.ts, .m4s vb.) ise direkt stream olarak aktar
         req = requests.get(target_url, headers=headers, stream=True, timeout=10)
         return Response(content=req.content, status_code=req.status_code, media_type=req.headers.get("content-type"))
         
@@ -514,7 +509,7 @@ def proxy_stream(channel_id: str, file_name: str, request: fastapi.Request = Non
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/playlist.m3u")
-def generate_m3u(request: fastapi.Request):
+def generate_m3u(request: Request):
     scraper = cloudscraper.create_scraper()
     player_base = get_dynamic_player_base()
     
@@ -535,7 +530,6 @@ def generate_m3u(request: fastapi.Request):
         group = f"CANLI MAÇLAR - {match['league']}"
         extinf = f'#EXTINF:-1 tvg-logo="{match["main_logo"]}" group-title="{group}",{match["name"]}'
         m3u_list.append(extinf)
-        # ExoPlayer için tertemiz proxy linki (Hiçbir ek ayar gerektirmez)
         m3u_list.append(f'{base_url}/proxy/{match["id"]}/mono.m3u8')
         
     for channel in all_channels:
