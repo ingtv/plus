@@ -1,14 +1,17 @@
-from flask import Flask, Response, jsonify
+from fastapi import FastAPI, Response
 import requests
 import urllib3
+import json
+import re
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
-import os
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-app = Flask(__name__)
+app = FastAPI(title="Justin M3U Generator", version="1.0")
 
+# KAYNAKLAR
+REDIRECT_SOURCE_URL = "http://raw.githack.com/eniyiyayinci/redirect-cdn/main/inattv.html"
 DOMAIN_API_URL = "https://data-reality.com/domain.php"
 MATCHES_API_URL = "https://data-reality.com/matches.php"
 CHANNELS_API_URL = "https://data-reality.com/channels.php"
@@ -27,7 +30,7 @@ def get_base_url_with_fallback():
             base_url = base_url.replace("\\", "").rstrip('/')
             return base_url + "/"
     except Exception as e:
-        print(f"Domain API hatası: {e}")
+        print(f"⚠️ Domain API hatası: {e}")
     
     parsed = urlparse(MATCHES_API_URL)
     return f"{parsed.scheme}://{parsed.netloc}/"
@@ -139,38 +142,71 @@ def parse_channels_from_html(html_content):
             continue
     return channels
 
-@app.route('/')
-@app.route('/m3u')
-def generate_m3u():
-    try:
-        base_url = get_base_url_with_fallback()
-        referrer = get_referrer_with_fallback()
-        
-        r_matches = requests.get(MATCHES_API_URL, headers=HEADERS, timeout=15, verify=False)
-        r_channels = requests.get(CHANNELS_API_URL, headers=HEADERS, timeout=15, verify=False)
-        
-        all_matches = parse_matches_from_html(r_matches.text)
-        all_channels = parse_channels_from_html(r_channels.text)
-        
-        m3u_list = ["#EXTM3U"]
-        
-        for match in all_matches:
-            group = f"CANLI MAÇLAR - {match['league']}"
-            m3u_list.append(f'#EXTINF:-1 tvg-logo="{match["main_logo"]}" group-title="{group}",{match["name"]}')
-            m3u_list.append(f'#EXTVLCOPT:http-user-agent={HEADERS["User-Agent"]}')
-            m3u_list.append(f'#EXTVLCOPT:http-referrer={referrer}/')
-            m3u_list.append(f'{base_url}{match["id"]}/mono.m3u8')
-            
-        for channel in all_channels:
-            m3u_list.append(f'#EXTINF:-1 tvg-logo="{channel["logo"]}" group-title="7/24 KANALLAR",{channel["name"]}')
-            m3u_list.append(f'#EXTVLCOPT:http-user-agent={HEADERS["User-Agent"]}')
-            m3u_list.append(f'#EXTVLCOPT:http-referrer={referrer}/')
-            m3u_list.append(f'{base_url}{channel["id"]}/mono.m3u8')
-            
-        return Response("\n".join(m3u_list), mimetype="audio/x-mpegurl")
-    except Exception as e:
-        return f"Hata: {str(e)}", 500
+@app.get("/")
+def home():
+    return {"status": "online", "endpoints": ["/playlist.m3u", "/detay.json"]}
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+@app.get("/playlist.m3u")
+def generate_m3u():
+    base_url = get_base_url_with_fallback()
+    referrer = get_referrer_with_fallback()
+    
+    all_matches = []
+    all_channels = []
+    
+    try:
+        r = requests.get(MATCHES_API_URL, headers=HEADERS, timeout=15)
+        all_matches = parse_matches_from_html(r.text)
+    except Exception:
+        pass
+        
+    try:
+        r = requests.get(CHANNELS_API_URL, headers=HEADERS, timeout=15)
+        all_channels = parse_channels_from_html(r.text)
+    except Exception:
+        pass
+        
+    m3u_list = ["#EXTM3U"]
+    
+    for match in all_matches:
+        group = f"CANLI MAÇLAR - {match['league']}"
+        extinf = f'#EXTINF:-1 tvg-logo="{match["main_logo"]}" group-title="{group}",{match["name"]}'
+        m3u_list.append(extinf)
+        m3u_list.append(f'#EXTVLCOPT:http-user-agent={HEADERS["User-Agent"]}')
+        m3u_list.append(f'#EXTVLCOPT:http-referrer={referrer}/')
+        m3u_list.append(f'{base_url}{match["id"]}/mono.m3u8')
+        
+    for channel in all_channels:
+        extinf = f'#EXTINF:-1 tvg-logo="{channel["logo"]}" group-title="7/24 KANALLAR",{channel["name"]}'
+        m3u_list.append(extinf)
+        m3u_list.append(f'#EXTVLCOPT:http-user-agent={HEADERS["User-Agent"]}')
+        m3u_list.append(f'#EXTVLCOPT:http-referrer={referrer}/')
+        m3u_list.append(f'{base_url}{channel["id"]}/mono.m3u8')
+        
+    m3u_content = "\n".join(m3u_list)
+    return Response(content=m3u_content, media_type="audio/x-mpegurl")
+
+@app.get("/detay.json")
+def generate_json():
+    all_matches = []
+    all_channels = []
+    try:
+        r = requests.get(MATCHES_API_URL, headers=HEADERS, timeout=15)
+        all_matches = parse_matches_from_html(r.text)
+    except Exception:
+        pass
+        
+    try:
+        r = requests.get(CHANNELS_API_URL, headers=HEADERS, timeout=15)
+        all_channels = parse_channels_from_html(r.text)
+    except Exception:
+        pass
+        
+    data = {
+        'matches': all_matches,
+        'channels': all_channels,
+        'total_matches': len(all_matches),
+        'total_channels': len(all_channels),
+        'total_broadcasts': len(all_matches) + len(all_channels)
+    }
+    return data
