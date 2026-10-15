@@ -8,21 +8,329 @@ from urllib.parse import urlparse, urljoin
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-app = FastAPI(title="Justin M3U Generator", version="14.0")
+app = FastAPI(title="Justin M3U Generator", version="15.0")
 
-# Orijinal Sabit API Kaynakları
 DOMAIN_API_URL = "https://data-reality.com/domain.php"
 MATCHES_API_URL = "https://data-reality.com/matches.php"
-CHANNELS_API_URL = "https://data-reality.com/channels.php"
-
-# Player base domainini otomatik bulacağımız kaynak
 AMP_INDEX_URL = "https://raw.githubusercontent.com/eniyiyayinci/taraftarium-amp/refs/heads/main/index.html"
 
+# Sabit kanalları doğrudan buraya gömdük (istediğin zaman elle güncelleyebilirsin)
+STATIC_CHANNELS_HTML = """
+<a class="single-match show " href="channel?id=zirve" data-matchtype="Zirve" target="macth-video">
+<img src="img/tv.png" style="border-radius:0px !important;" width="20" height="20" loading="lazy">
+<div class="match-detail">
+<div class="event"><span class="lives">7/24</span></div>
+    <div class="teams">
+        <div class="home">BEIN SPORTS 1</div>
+        <div class="away" style="text-align:right;"><img src="img/beinsports1.png" style="border-radius:0px !important; margin-top:-10px;" width="100" loading="lazy"></div>
+    </div>
+</div>
+</a>
+<a class="single-match show " href="channel?id=b2" data-matchtype="Zirve" target="macth-video">
+<img src="img/tv.png" style="border-radius:0px !important;" width="20" height="20" loading="lazy">
+<div class="match-detail">
+    <div class="event"><span class="lives">7/24</span></div>
+    <div class="teams">
+        <div class="home">BEIN SPORTS 2</div>
+        <div class="away" style="text-align:right;"><img src="img/beinsports2.png" style="border-radius:0px !important; margin-top:-10px;" width="100" loading="lazy"></div>
+    </div>
+</div>
+</a>
+<a class="single-match show " href="channel?id=b3" data-matchtype="Zirve" target="macth-video">
+<img src="img/tv.png" style="border-radius:0px !important;" width="20" height="20" loading="lazy">
+<div class="match-detail">
+    <div class="event"><span class="lives">7/24</span></div>
+    <div class="teams">
+        <div class="home">BEIN SPORTS 3</div>
+        <div class="away" style="text-align:right;"><img src="img/beinsports3.png" style="border-radius:0px !important; margin-top:-10px;" width="100" loading="lazy"></div>
+    </div>
+</div>
+</a>
+ <a class="single-match show " href="channel?id=b4" data-matchtype="Zirve" target="macth-video">
+<img src="img/tv.png" style="border-radius:0px !important;" width="20" height="20" loading="lazy">
+<div class="match-detail">
+    <div class="event"><span class="lives">7/24</span></div>
+    <div class="teams">
+        <div class="home">BEIN SPORTS 4</div>
+        <div class="away" style="text-align:right;"><img src="img/beinsports4.png" style="border-radius:0px !important; margin-top:-10px;" width="100" loading="lazy"></div>
+    </div>
+</div>
+</a>
+<a class="single-match show " href="channel?id=b5" data-matchtype="Zirve" target="macth-video">
+<img src="img/tv.png" style="border-radius:0px !important;" width="20" height="20" loading="lazy">
+<div class="match-detail">
+    <div class="event"><span class="lives">7/24</span></div>
+    <div class="teams">
+        <div class="home">BEIN SPORTS 5</div>
+        <div class="away" style="text-align:right;"><img src="img/beinsports5.png" style="border-radius:0px !important; margin-top:-10px;" width="100" loading="lazy"></div>
+    </div>
+</div>
+</a>
+<a class="single-match show " href="channel?id=bm1" data-matchtype="Zirve" target="macth-video">
+<img src="img/tv.png" style="border-radius:0px !important;" width="20" height="20" loading="lazy">
+<div class="match-detail">
+    <div class="event"><span class="lives">7/24</span></div>
+    <div class="teams">
+        <div class="home">BEIN SPORTS MAX 1</div>
+        <div class="away" style="text-align:right;"><img src="img/beinsportsmax1.png" style="border-radius:0px !important; margin-top:-10px;" width="100" loading="lazy"></div>
+    </div>
+</div>
+</a>
+ <a class="single-match show " href="channel?id=bm2" data-matchtype="Zirve" target="macth-video">
+<img src="img/tv.png" style="border-radius:0px !important;" width="20" height="20" loading="lazy">
+<div class="match-detail">
+    <div class="event"><span class="lives">7/24</span></div>
+    <div class="teams">
+        <div class="home">BEIN SPORTS MAX 2</div>
+        <div class="away" style="text-align:right;"><img src="img/beinsportsmax2.png" style="border-radius:0px !important; margin-top:-10px;" width="100" loading="lazy"></div>
+    </div>
+</div>
+</a>
+<a class="single-match show " href="channel?id=ss" data-matchtype="Zirve" target="macth-video">
+<img src="img/tv.png" style="border-radius:0px !important;" width="20" height="20" loading="lazy">
+<div class="match-detail">
+    <div class="event"><span class="lives">7/24</span></div>
+    <div class="teams">
+        <div class="home">S SPORT</div>
+        <div class="away" style="text-align:right;"><img src="img/ssport1.png" style="border-radius:0px !important; margin-top:-10px;" width="100" loading="lazy"></div>
+    </div>
+</div>
+</a>
+ <a class="single-match show " href="channel?id=ss2" data-matchtype="Zirve" target="macth-video">
+<img src="img/tv.png" style="border-radius:0px !important;" width="20" height="20" loading="lazy">
+<div class="match-detail">
+    <div class="event"><span class="lives">7/24</span></div>
+    <div class="teams">
+        <div class="home">S SPORT 2</div>
+        <div class="away" style="text-align:right;"><img src="img/ssport2.png" style="border-radius:0px !important; margin-top:-10px;" width="100" loading="lazy"></div>
+    </div>
+</div>
+</a>
+ <a class="single-match show " href="channel?id=smarts" data-matchtype="Zirve" target="macth-video">
+<img src="img/tv.png" style="border-radius:0px !important;" width="20" height="20" loading="lazy">
+<div class="match-detail">
+    <div class="event"><span class="lives">7/24</span></div>
+    <div class="teams">
+        <div class="home">SMART SPOR</div>
+        <div class="away" style="text-align:right;"><img src="img/smartspor.png" style="border-radius:0px !important; margin-top:-10px;" width="100" loading="lazy"></div>
+    </div>
+</div>
+</a>
+ <a class="single-match show " href="channel?id=sms2" data-matchtype="Zirve" target="macth-video">
+<img src="img/tv.png" style="border-radius:0px !important;" width="20" height="20" loading="lazy">
+<div class="match-detail">
+    <div class="event"><span class="lives">7/24</span></div>
+    <div class="teams">
+        <div class="home">SMART SPOR 2</div>
+        <div class="away" style="text-align:right;"><img src="img/smartspor2.png" style="border-radius:0px !important; margin-top:-10px;" width="100" loading="lazy"></div>
+    </div>
+</div>
+</a>
+ <a class="single-match show " href="channel?id=t1" data-matchtype="Zirve" target="macth-video">
+<img src="img/tv.png" style="border-radius:0px !important;" width="20" height="20" loading="lazy">
+<div class="match-detail">
+    <div class="event"><span class="lives">7/24</span></div>
+    <div class="teams">
+        <div class="home">TIVIBU SPOR 1</div>
+        <div class="away" style="text-align:right;"><img src="img/tivibu1.png" style="border-radius:0px !important; margin-top:-10px;" width="100" loading="lazy"></div>
+    </div>
+</div>
+</a>
+ <a class="single-match show " href="channel?id=t2" data-matchtype="Zirve" target="macth-video">
+<img src="img/tv.png" style="border-radius:0px !important;" width="20" height="20" loading="lazy">
+<div class="match-detail">
+    <div class="event"><span class="lives">7/24</span></div>
+    <div class="teams">
+        <div class="home">TIVIBU SPOR 2</div>
+        <div class="away" style="text-align:right;"><img src="img/tivibu2.png" style="border-radius:0px !important; margin-top:-10px;" width="100" loading="lazy"></div>
+    </div>
+</div>
+</a>
+<a class="single-match show " href="channel?id=t3" data-matchtype="Zirve" target="macth-video">
+<img src="img/tv.png" style="border-radius:0px !important;" width="20" height="20" loading="lazy">
+<div class="match-detail">
+    <div class="event"><span class="lives">7/24</span></div>
+    <div class="teams">
+        <div class="home">TIVIBU SPOR 3</div>
+        <div class="away" style="text-align:right;"><img src="img/tivibu3.png" style="border-radius:0px !important; margin-top:-10px;" width="100" loading="lazy"></div>
+    </div>
+</div>
+</a>
+<a class="single-match show " href="channel?id=t4" data-matchtype="Zirve" target="macth-video">
+<img src="img/tv.png" style="border-radius:0px !important;" width="20" height="20" loading="lazy">
+<div class="match-detail">
+    <div class="event"><span class="lives">7/24</span></div>
+    <div class="teams">
+        <div class="home">TIVIBU SPOR 4</div>
+        <div class="away" style="text-align:right;"><img src="img/tivibu4.png" style="border-radius:0px !important; margin-top:0px;" width="50" loading="lazy"></div>
+    </div>
+</div>
+</a>
+<a class="single-match show " href="channel?id=trtspor" data-matchtype="Zirve" target="macth-video">
+<img src="img/tv.png" style="border-radius:0px !important;" width="20" height="20" loading="lazy">
+<div class="match-detail">
+    <div class="event"><span class="lives">7/24</span></div>
+    <div class="teams">
+        <div class="home">TRT SPOR</div>
+        <div class="away" style="text-align:right;"><img src="img/trtspornew.png" style="border-radius:0px !important; margin-top:-10px;" width="75" loading="lazy"></div>
+    </div>
+</div>
+</a>
+<a class="single-match show " href="channel?id=trtspor2" data-matchtype="Zirve" target="macth-video">
+<img src="img/tv.png" style="border-radius:0px !important;" width="20" height="20" loading="lazy">
+<div class="match-detail">
+    <div class="event"><span class="lives">7/24</span></div>
+    <div class="teams">
+        <div class="home">TRT SPOR YILDIZ</div>
+        <div class="away" style="text-align:right;"><img src="img/trtspor2.png" style="border-radius:0px !important; margin-top:-10px;" width="75" loading="lazy"></div>
+    </div>
+</div>
+</a>
+<a class="single-match show " href="channel?id=trt1" data-matchtype="Zirve" target="macth-video">
+<img src="img/tv.png" style="border-radius:0px !important;" width="20" height="20" loading="lazy">
+<div class="match-detail">
+    <div class="event"><span class="lives">7/24</span></div>
+    <div class="teams">
+        <div class="home">TRT 1</div>
+        <div class="away" style="text-align:right;"><img src="img/trt1.png" style="border-radius:0px !important; margin-top:0px;" width="75" loading="lazy"></div>
+    </div>
+</div>
+</a>
+<a class="single-match show " href="channel?id=as" data-matchtype="Zirve" target="macth-video">
+<img src="img/tv.png" style="border-radius:0px !important;" width="20" height="20" loading="lazy">
+<div class="match-detail">
+    <div class="event"><span class="lives">7/24</span></div>
+    <div class="teams">
+        <div class="home">A SPOR</div>
+        <div class="away" style="text-align:right;"><img src="img/aspornew.png" style="border-radius:0px !important; margin-top:0px;" width="35" loading="lazy"></div>
+    </div>
+</div>
+</a>
+<a class="single-match show " href="channel?id=atv" data-matchtype="Zirve" target="macth-video">
+<img src="img/tv.png" style="border-radius:0px !important;" width="20" height="20" loading="lazy">
+<div class="match-detail">
+    <div class="event"><span class="lives">7/24</span></div>
+    <div class="teams">
+        <div class="home">ATV</div>
+        <div class="away" style="text-align:right;"><img src="img/atv.png" style="border-radius:0px !important; margin-top:0px;" width="35" loading="lazy"></div>
+    </div>
+</div>
+</a>
+<a class="single-match show " href="channel?id=tv8" data-matchtype="Zirve" target="macth-video">
+<img src="img/tv.png" style="border-radius:0px !important;" width="20" height="20" loading="lazy">
+<div class="match-detail">
+    <div class="event"><span class="lives">7/24</span></div>
+    <div class="teams">
+        <div class="home">TV 8</div>
+        <div class="away" style="text-align:right;"><img src="img/tv8.png" style="border-radius:0px !important; margin-top:0px;" width="35" loading="lazy"></div>
+    </div>
+</div>
+</a>
+<a class="single-match show " href="channel?id=tv85" data-matchtype="Zirve" target="macth-video">
+<img src="img/tv.png" style="border-radius:0px !important;" width="20" height="20" loading="lazy">
+<div class="match-detail">
+    <div class="event"><span class="lives">7/24</span></div>
+    <div class="teams">
+        <div class="home">TV 8,5</div>
+        <div class="away" style="text-align:right;"><img src="img/tv85.png" style="border-radius:0px !important; margin-top:0px;" width="35" loading="lazy"></div>
+    </div>
+</div>
+</a>
+<a class="single-match show " href="channel?id=eu1" data-matchtype="Zirve" target="macth-video">
+<img src="img/tv.png" style="border-radius:0px !important;" width="20" height="20" loading="lazy">
+<div class="match-detail">
+    <div class="event"><span class="lives">7/24</span></div>
+    <div class="teams">
+        <div class="home">EURO SPORT 1</div>
+        <div class="away" style="text-align:right;"><img src="img/eurosport1.png" style="border-radius:0px !important; margin-top:-10px;" width="100" loading="lazy"></div>
+    </div>
+</div>
+</a>
+<a class="single-match show " href="channel?id=eu2" data-matchtype="Zirve" target="macth-video">
+<img src="img/tv.png" style="border-radius:0px !important;" width="20" height="20" loading="lazy">
+<div class="match-detail">
+    <div class="event"><span class="lives">7/24</span></div>
+    <div class="teams">
+        <div class="home">EURO SPORT 2</div>
+        <div class="away" style="text-align:right;"><img src="img/eurosport2.png" style="border-radius:0px !important; margin-top:-10px;" width="100" loading="lazy"></div>
+    </div>
+</div>
+</a>
+<a class="single-match show " href="channel?id=ex7" data-matchtype="Zirve" target="macth-video">
+<img src="img/tv.png" style="border-radius:0px !important;" width="20" height="20" loading="lazy">
+<div class="match-detail">
+    <div class="event"><span class="lives">7/24</span></div>
+    <div class="teams">
+        <div class="home">TABII SPOR</div>
+        <div class="away" style="text-align:right;"><img src="img/tabii.png" style="border-radius:0px !important; margin-top:-10px;" width="100" loading="lazy"></div>
+    </div>
+</div>
+</a>
+ <a class="single-match show " href="channel?id=ex1" data-matchtype="Zirve" target="macth-video">
+<img src="img/tv.png" style="border-radius:0px !important;" width="20" height="20" loading="lazy">
+<div class="match-detail">
+    <div class="event"><span class="lives">7/24</span></div>
+    <div class="teams">
+        <div class="home">TABII SPOR 1</div>
+        <div class="away" style="text-align:right;"><img src="img/tabii.png" style="border-radius:0px !important; margin-top:-10px;" width="100" loading="lazy"></div>
+    </div>
+</div>
+</a>
+ <a class="single-match show " href="channel?id=ex2" data-matchtype="Zirve" target="macth-video">
+<img src="img/tv.png" style="border-radius:0px !important;" width="20" height="20" loading="lazy">
+<div class="match-detail">
+    <div class="event"><span class="lives">7/24</span></div>
+    <div class="teams">
+        <div class="home">TABII SPOR 2</div>
+        <div class="away" style="text-align:right;"><img src="img/tabii.png" style="border-radius:0px !important; margin-top:-10px;" width="100" loading="lazy"></div>
+    </div>
+</div>
+</a>
+ <a class="single-match show " href="channel?id=ex3" data-matchtype="Zirve" target="macth-video">
+<img src="img/tv.png" style="border-radius:0px !important;" width="20" height="20" loading="lazy">
+<div class="match-detail">
+    <div class="event"><span class="lives">7/24</span></div>
+    <div class="teams">
+        <div class="home">TABII SPOR 3</div>
+        <div class="away" style="text-align:right;"><img src="img/tabii.png" style="border-radius:0px !important; margin-top:-10px;" width="100" loading="lazy"></div>
+    </div>
+</div>
+</a>
+ <a class="single-match show " href="channel?id=ex4" data-matchtype="Zirve" target="macth-video">
+<img src="img/tv.png" style="border-radius:0px !important;" width="20" height="20" loading="lazy">
+<div class="match-detail">
+    <div class="event"><span class="lives">7/24</span></div>
+    <div class="teams">
+        <div class="home">TABII SPOR 4</div>
+        <div class="away" style="text-align:right;"><img src="img/tabii.png" style="border-radius:0px !important; margin-top:-10px;" width="100" loading="lazy"></div>
+    </div>
+</div>
+</a>
+ <a class="single-match show " href="channel?id=ex5" data-matchtype="Zirve" target="macth-video">
+<img src="img/tv.png" style="border-radius:0px !important;" width="20" height="20" loading="lazy">
+<div class="match-detail">
+    <div class="event"><span class="lives">7/24</span></div>
+    <div class="teams">
+        <div class="home">TABII SPOR 5</div>
+        <div class="away" style="text-align:right;"><img src="img/tabii.png" style="border-radius:0px !important; margin-top:-10px;" width="100" loading="lazy"></div>
+    </div>
+</div>
+</a>
+ <a class="single-match show " href="channel?id=ex6" data-matchtype="Zirve" target="macth-video">
+<img src="img/tv.png" style="border-radius:0px !important;" width="20" height="20" loading="lazy">
+<div class="match-detail">
+    <div class="event"><span class="lives">7/24</span></div>
+    <div class="teams">
+        <div class="home">TABII SPOR 6</div>
+        <div class="away" style="text-align:right;"><img src="img/tabii.png" style="border-radius:0px !important; margin-top:-10px;" width="100" loading="lazy"></div>
+    </div>
+</div>
+</a>
+"""
+
 def get_dynamic_player_base():
-    """gettotv56.com gibi sürekli değişen player adresini otomatik bulur"""
     scraper = cloudscraper.create_scraper()
     player_base = "https://gettotv56.com/"
-    
     try:
         r_idx = scraper.get(AMP_INDEX_URL, timeout=10)
         if r_idx.status_code == 200:
@@ -34,7 +342,6 @@ def get_dynamic_player_base():
                     return player_base
     except Exception as e:
         print(f"⚠️ Player base çözme hatası: {e}")
-        
     return player_base
 
 def get_api_headers(player_base):
@@ -72,7 +379,6 @@ def parse_matches_from_html(html_content):
             href = link.get('href', '')
             channel_id = href.replace('channel?id=', '') if 'channel?id=' in href else None
             
-            # Paylaştığın yapıya göre resimler (Ev sahibi ve deplasman logoları)
             imgs = link.find_all('img')
             home_logo = imgs[0].get('src') if len(imgs) > 0 else ''
             away_logo = imgs[1].get('src') if len(imgs) > 1 else ''
@@ -140,27 +446,26 @@ def parse_channels_from_html(html_content):
             
             detail_div = link.find('div', class_='match-detail')
             if detail_div:
-                event_div = detail_div.find('div', class_='event')
-                # 7/24 kanalları veya Zirve kanallarını yakala
-                if event_div and ('7/24' in event_div.text or link.get('data-matchtype') == 'Zirve'):
-                    teams_div = detail_div.find('div', class_='teams')
-                    if teams_div:
-                        home_div = teams_div.find('div', class_='home')
-                        channel_name = home_div.text.strip() if home_div else ''
-                        
-                        # Kanal logosu away div içerisindeki img'den alınır
-                        away_div = teams_div.find('div', class_='away')
-                        logo_img = away_div.find('img') if away_div else None
-                        logo_url = logo_img.get('src') if logo_img else ''
-                        
-                        if channel_id and channel_name:
-                            channels.append({
-                                'id': channel_id,
-                                'name': channel_name,
-                                'logo': logo_url,
-                                'type': 'static',
-                                'source': 'channel'
-                            })
+                teams_div = detail_div.find('div', class_='teams')
+                if teams_div:
+                    home_div = teams_div.find('div', class_='home')
+                    channel_name = home_div.text.strip() if home_div else ''
+                    
+                    away_div = teams_div.find('div', class_='away')
+                    logo_img = away_div.find('img') if away_div else None
+                    # Logo yolunu düzeltmek gerekirse stream_base ile birleştirebiliriz veya direkt alabiliriz
+                    logo_url = logo_img.get('src') if logo_img else ''
+                    if logo_url and not logo_url.startswith('http'):
+                        logo_url = f"https://data-reality.com/{logo_url}"
+                    
+                    if channel_id and channel_name:
+                        channels.append({
+                            'id': channel_id,
+                            'name': channel_name,
+                            'logo': logo_url,
+                            'type': 'static',
+                            'source': 'channel'
+                        })
         except Exception:
             continue
     return channels
@@ -177,19 +482,14 @@ def generate_m3u():
     stream_base_url = get_stream_base_url(player_base)
     
     all_matches = []
-    all_channels = []
+    # Sabit kanalları doğrudan gömdüğümüz HTML'den parse ediyoruz
+    all_channels = parse_channels_from_html(STATIC_CHANNELS_HTML)
     
     try:
         r = scraper.get(MATCHES_API_URL, headers=headers, timeout=15)
         all_matches = parse_matches_from_html(r.text)
     except Exception as e:
         print(f"⚠️ Maç hatası: {e}")
-        
-    try:
-        r = scraper.get(CHANNELS_API_URL, headers=headers, timeout=15)
-        all_channels = parse_channels_from_html(r.text)
-    except Exception as e:
-        print(f"⚠️ Kanal hatası: {e}")
         
     m3u_list = ["#EXTM3U"]
     
@@ -218,19 +518,13 @@ def generate_json():
     stream_base_url = get_stream_base_url(player_base)
     
     all_matches = []
-    all_channels = []
+    all_channels = parse_channels_from_html(STATIC_CHANNELS_HTML)
     
     try:
         r = scraper.get(MATCHES_API_URL, headers=headers, timeout=15)
         all_matches = parse_matches_from_html(r.text)
     except Exception as e:
         print(f"⚠️ JSON Maç hatası: {e}")
-        
-    try:
-        r = scraper.get(CHANNELS_API_URL, headers=headers, timeout=15)
-        all_channels = parse_channels_from_html(r.text)
-    except Exception as e:
-        print(f"⚠️ JSON Kanal hatası: {e}")
         
     return {
         'player_base': player_base,
