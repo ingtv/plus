@@ -38,9 +38,9 @@ def get_dynamic_endpoints():
         print(f"⚠️ Domain çözümleme hatası: {e}, varsayılan kullanılıyor.")
     
     # Orijinal API yapılarına göre endpoint'leri dinamik olarak oluşturuyoruz
-    domain_api = urljoin(base_url, "domain.php")
-    matches_api = urljoin(base_url, "matches.php")
-    channels_api = urljoin(base_url, "channels.php")
+    domain_api = urljoin(base_url, "https://data-reality.com/domain.php")
+    matches_api = urljoin(base_url, "https://data-reality.com/matches.php")
+    channels_api = urljoin(base_url, "https://data-reality.com/channels.php")
     
     return base_url, domain_api, matches_api, channels_api
 
