@@ -8,21 +8,16 @@ from urllib.parse import urlparse, urljoin
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-app = FastAPI(title="Justin M3U Generator", version="12.0")
+app = FastAPI(title="Justin M3U Generator", version="13.0")
 
-# Orijinal API Kaynakları
 DOMAIN_API_URL = "https://data-reality.com/domain.php"
 MATCHES_API_URL = "https://data-reality.com/matches.php"
 CHANNELS_API_URL = "https://data-reality.com/channels.php"
-
-# Player base'i bulacağımız kaynak
 AMP_INDEX_URL = "https://raw.githubusercontent.com/eniyiyayinci/taraftarium-amp/refs/heads/main/index.html"
 
 def get_dynamic_player_base():
-    """gettotv56.com gibi sürekli değişen player adresini otomatik bulur"""
     scraper = cloudscraper.create_scraper()
     player_base = "https://gettotv56.com/"
-    
     try:
         r_idx = scraper.get(AMP_INDEX_URL, timeout=10)
         if r_idx.status_code == 200:
@@ -35,11 +30,9 @@ def get_dynamic_player_base():
                     return player_base
     except Exception as e:
         print(f"⚠️ Player base çözme hatası: {e}")
-        
     return player_base
 
 def get_api_headers(player_base):
-    """Loglarda yakaladığımız gibi Origin ve Referer değerlerini dinamik player base'e ayarlar"""
     return {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
         "Referer": player_base,
@@ -55,11 +48,11 @@ def get_stream_base_url(player_base):
     headers = get_api_headers(player_base)
     try:
         r = scraper.get(DOMAIN_API_URL, headers=headers, timeout=10)
+        print(f"📡 Domain API Status: {r.status_code}, Yanıt: {r.text[:100]}")
         data = r.json()
         base_url = data.get("baseurl", "")
         if base_url:
             base_url = base_url.replace("\\", "").rstrip('/')
-            print(f"✅ Domain API'den stream base alındı: {base_url}")
             return base_url + "/"
     except Exception as e:
         print(f"⚠️ Domain API hatası: {e}")
@@ -183,14 +176,14 @@ def generate_m3u():
     
     try:
         r = scraper.get(MATCHES_API_URL, headers=headers, timeout=15)
-        print(f"📡 Matches API Status: {r.status_code}")
+        print(f"📡 Matches API Status: {r.status_code}, Boyut: {len(r.text)}")
         all_matches = parse_matches_from_html(r.text)
     except Exception as e:
         print(f"⚠️ Maç hatası: {e}")
         
     try:
         r = scraper.get(CHANNELS_API_URL, headers=headers, timeout=15)
-        print(f"📡 Channels API Status: {r.status_code}")
+        print(f"📡 Channels API Status: {r.status_code}, Boyut: {len(r.text)}")
         all_channels = parse_channels_from_html(r.text)
     except Exception as e:
         print(f"⚠️ Kanal hatası: {e}")
@@ -226,12 +219,14 @@ def generate_json():
     
     try:
         r = scraper.get(MATCHES_API_URL, headers=headers, timeout=15)
+        print(f"📡 JSON Matches Status: {r.status_code}, Boyut: {len(r.text)}")
         all_matches = parse_matches_from_html(r.text)
     except Exception as e:
         print(f"⚠️ JSON Maç hatası: {e}")
         
     try:
         r = scraper.get(CHANNELS_API_URL, headers=headers, timeout=15)
+        print(f"📡 JSON Channels Status: {r.status_code}, Boyut: {len(r.text)}")
         all_channels = parse_channels_from_html(r.text)
     except Exception as e:
         print(f"⚠️ JSON Kanal hatası: {e}")
