@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Response
-import cloudscraper
+import requests
 import urllib3
 import json
 import re
@@ -8,9 +8,10 @@ from urllib.parse import urlparse, urljoin
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-app = FastAPI(title="Justin M3U Generator", version="6.0")
+app = FastAPI(title="Justin M3U Generator", version="7.0")
 
-SITEMAP_URL = "https://raw.githubusercontent.com/eniyiyayinci/taraftarium-amp/refs/heads/main/sitemap.xml"
+# Güncel domainin doğrudan içine yazıldığı landing index kaynağı
+INDEX_SOURCE_URL = "https://raw.githubusercontent.com/eniyiyayinci/taraftarium-amp/refs/heads/main/index.html"
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
@@ -18,43 +19,23 @@ HEADERS = {
 }
 
 def get_dynamic_base_url():
-    """Cloudscraper kullanarak sitemap'ten ve yönlendirmeden güncel adresi çözer"""
-    scraper = cloudscraper.create_scraper()
+    """index.html içerisindeki .primary class'ına sahip linkten güncel domaini alır"""
     fallback_url = "https://taraftarium24.io/"
     
     try:
-        print("🔍 Sitemap okunuyor (Cloudscraper)...")
-        r = scraper.get(SITEMAP_URL, headers=HEADERS, timeout=10)
+        print("🔍 index.html kaynağı okunuyor...")
+        r = requests.get(INDEX_SOURCE_URL, headers=HEADERS, timeout=10, verify=False)
         if r.status_code == 200:
-            soup = BeautifulSoup(r.text, 'xml')
-            loc_tag = soup.find('loc')
-            if loc_tag and loc_tag.text:
-                fallback_url = loc_tag.text.strip()
-        
-        print(f"📡 Ana giriş adresi: {fallback_url}")
-
-        print("🔍 Güncel yayın domaini çözümleniyor...")
-        r_main = scraper.get(fallback_url, headers=HEADERS, timeout=10, allow_redirects=True)
-        
-        final_url = r_main.url
-        parsed_final = urlparse(final_url)
-        if parsed_final.netloc:
-            base_url = f"{parsed_final.scheme}://{parsed_final.netloc}/"
-            print(f"✅ Yakalanan güncel yayın domaini: {base_url}")
-            return base_url
-
-        soup_main = BeautifulSoup(r_main.text, 'html.parser')
-        for script in soup_main.find_all('script'):
-            if script.string:
-                urls = re.findall(r'https?://[^\s<>"]+', script.string)
-                for u in urls:
-                    if 'taraftarium' in u or '.xyz' in u or '.com' in u:
-                        parsed_u = urlparse(u)
-                        if parsed_u.netloc:
-                            base_url = f"{parsed_u.scheme}://{parsed_u.netloc}/"
-                            print(f"✅ Script içinden bulunan yayın domaini: {base_url}")
-                            return base_url
-
+            soup = BeautifulSoup(r.text, 'html.parser')
+            # <a href="https://taraftarium1086.xyz/" class="primary" ...> etiketini bul
+            primary_link = soup.find('a', class_='primary')
+            if primary_link and primary_link.get('href'):
+                href = primary_link.get('href').strip()
+                parsed = urlparse(href)
+                if parsed.netloc:
+                    base_url = f"{parsed.scheme}://{parsed.netloc}/"
+                    print(f"✅ index.html içinden yakalanan güncel domain: {base_url}")
+                    return base_url
     except Exception as e:
         print(f"⚠️ Domain çözümleme hatası: {e}")
         
@@ -168,7 +149,6 @@ def home():
 
 @app.get("/playlist.m3u")
 def generate_m3u():
-    scraper = cloudscraper.create_scraper()
     base_url = get_dynamic_base_url()
     matches_url = urljoin(base_url, "matches.php")
     channels_url = urljoin(base_url, "channels.php")
@@ -177,14 +157,14 @@ def generate_m3u():
     all_channels = []
     
     try:
-        r = scraper.get(matches_url, headers=HEADERS, timeout=15)
+        r = requests.get(matches_url, headers=HEADERS, timeout=15, verify=False)
         print(f"📡 Matches API Status: {r.status_code}")
         all_matches = parse_matches_from_html(r.text)
     except Exception as e:
         print(f"⚠️ Maç hatası: {e}")
         
     try:
-        r = scraper.get(channels_url, headers=HEADERS, timeout=15)
+        r = requests.get(channels_url, headers=HEADERS, timeout=15, verify=False)
         print(f"📡 Channels API Status: {r.status_code}")
         all_channels = parse_channels_from_html(r.text)
     except Exception as e:
@@ -211,7 +191,6 @@ def generate_m3u():
 
 @app.get("/detay.json")
 def generate_json():
-    scraper = cloudscraper.create_scraper()
     base_url = get_dynamic_base_url()
     matches_url = urljoin(base_url, "matches.php")
     channels_url = urljoin(base_url, "channels.php")
@@ -220,13 +199,13 @@ def generate_json():
     all_channels = []
     
     try:
-        r = scraper.get(matches_url, headers=HEADERS, timeout=15)
+        r = requests.get(matches_url, headers=HEADERS, timeout=15, verify=False)
         all_matches = parse_matches_from_html(r.text)
     except Exception as e:
         print(f"⚠️ JSON Maç hatası: {e}")
         
     try:
-        r = scraper.get(channels_url, headers=HEADERS, timeout=15)
+        r = requests.get(channels_url, headers=HEADERS, timeout=15, verify=False)
         all_channels = parse_channels_from_html(r.text)
     except Exception as e:
         print(f"⚠️ JSON Kanal hatası: {e}")
