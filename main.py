@@ -8,17 +8,16 @@ from urllib.parse import urlparse
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-app = FastAPI(title="Justin M3U Generator", version="1.0")
+app = FastAPI(title="Justin M3U Generator", version="1.1")
 
-# KAYNAKLAR
-REDIRECT_SOURCE_URL = "http://raw.githack.com/eniyiyayinci/redirect-cdn/main/inattv.html"
 DOMAIN_API_URL = "https://data-reality.com/domain.php"
 MATCHES_API_URL = "https://data-reality.com/matches.php"
 CHANNELS_API_URL = "https://data-reality.com/channels.php"
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Referer": "https://canlimacizlejustin.online/"
+    "Referer": "https://canlimacizlejustin.online/",
+    "X-Requested-With": "XMLHttpRequest"
 }
 
 def get_base_url_with_fallback():
@@ -46,6 +45,7 @@ def parse_matches_from_html(html_content):
     matches = []
     soup = BeautifulSoup(html_content, 'html.parser')
     match_links = soup.find_all('a', class_='single-match')
+    print(f"🔍 Parse edilen maç linki sayısı: {len(match_links)}")
     
     for link in match_links:
         try:
@@ -103,7 +103,8 @@ def parse_matches_from_html(html_content):
                         'time': time,
                         'source': 'match'
                     })
-        except Exception:
+        except Exception as e:
+            print(f"⚠️ Maç parse edilirken hata: {e}")
             continue
     return matches
 
@@ -111,6 +112,7 @@ def parse_channels_from_html(html_content):
     channels = []
     soup = BeautifulSoup(html_content, 'html.parser')
     channel_links = soup.find_all('a', class_='single-match')
+    print(f"🔍 Parse edilen kanal linki sayısı: {len(channel_links)}")
     
     for link in channel_links:
         try:
@@ -138,7 +140,7 @@ def parse_channels_from_html(html_content):
                                 'type': 'static',
                                 'source': 'channel'
                             })
-        except Exception:
+        except Exception as e:
             continue
     return channels
 
@@ -155,16 +157,18 @@ def generate_m3u():
     all_channels = []
     
     try:
-        r = requests.get(MATCHES_API_URL, headers=HEADERS, timeout=15)
+        r = requests.get(MATCHES_API_URL, headers=HEADERS, timeout=15, verify=False)
+        print(f"📡 Matches API Status Code: {r.status_code}")
         all_matches = parse_matches_from_html(r.text)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"❌ Matches API İstek Hatası: {e}")
         
     try:
-        r = requests.get(CHANNELS_API_URL, headers=HEADERS, timeout=15)
+        r = requests.get(CHANNELS_API_URL, headers=HEADERS, timeout=15, verify=False)
+        print(f"📡 Channels API Status Code: {r.status_code}")
         all_channels = parse_channels_from_html(r.text)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"❌ Channels API İstek Hatası: {e}")
         
     m3u_list = ["#EXTM3U"]
     
@@ -191,16 +195,16 @@ def generate_json():
     all_matches = []
     all_channels = []
     try:
-        r = requests.get(MATCHES_API_URL, headers=HEADERS, timeout=15)
+        r = requests.get(MATCHES_API_URL, headers=HEADERS, timeout=15, verify=False)
         all_matches = parse_matches_from_html(r.text)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"❌ JSON Matches Hatası: {e}")
         
     try:
-        r = requests.get(CHANNELS_API_URL, headers=HEADERS, timeout=15)
+        r = requests.get(CHANNELS_API_URL, headers=HEADERS, timeout=15, verify=False)
         all_channels = parse_channels_from_html(r.text)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"❌ JSON Channels Hatası: {e}")
         
     data = {
         'matches': all_matches,
