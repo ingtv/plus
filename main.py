@@ -2,63 +2,64 @@ from fastapi import FastAPI, Response
 import requests
 import urllib3
 import json
+import re
 from bs4 import BeautifulSoup
-from urllib.parse import urlparse, urljoin
+from urllib.parse import urlparse
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-app = FastAPI(title="Justin M3U Generator", version="1.2")
+app = FastAPI(title="Justin M3U Generator", version="2.0")
 
+# KAYNAKLAR
 REDIRECT_SOURCE_URL = "http://raw.githack.com/eniyiyayinci/redirect-cdn/main/inattv.html"
+DOMAIN_API_URL = "https://data-reality.com/domain.php"
+MATCHES_API_URL = "https://data-reality.com/matches.php"
+CHANNELS_API_URL = "https://data-reality.com/channels.php"
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Referer": "https://canlimacizlejustin.online/",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+    "Referer": "https://canlimacizlejustin.online/"
 }
 
-def get_dynamic_urls():
-    """Redirect sayfasından güncel domain ve API adreslerini çözmeye çalışır"""
-    matches_url = "https://data-reality.com/matches.php"
-    channels_url = "https://data-reality.com/channels.php"
-    base_url = "https://data-reality.com/"
-    
+def get_base_url_with_fallback():
+    """Base URL'i al"""
     try:
-        print("🔍 Redirect kaynağı kontrol ediliyor...")
-        r = requests.get(REDIRECT_SOURCE_URL, headers=HEADERS, timeout=10, verify=False)
-        if r.status_code == 200:
-            soup = BeautifulSoup(r.text, 'html.parser')
-            # Sayfa içinde yönlendirme veya meta refresh / script var mı bakalım
-            scripts = soup.find_all('script')
-            for script in scripts:
-                if script.string and ('http' in script.string):
-                    # İçerisinden URL ayıklama denemesi
-                    import re
-                    urls = re.findall(r'https?://[^\s<>"]+|www\.[^\s<>"]+', script.string)
-                    if urls:
-                        parsed_u = urlparse(urls[0])
-                        base_url = f"{parsed_u.scheme}://{parsed_u.netloc}/"
-                        matches_url = urljoin(base_url, "matches.php")
-                        channels_url = urljoin(base_url, "channels.php")
-                        print(f"✅ Güncel Domain Çözüldü: {base_url}")
-                        break
+        r = requests.get(DOMAIN_API_URL, headers=HEADERS, timeout=10, verify=False)
+        data = r.json()
+        base_url = data.get("baseurl", "")
+        if base_url:
+            base_url = base_url.replace("\\", "").rstrip('/')
+            print(f"✅ Domain API'den base URL alındı: {base_url}")
+            return base_url + "/"
     except Exception as e:
-        print(f"⚠️ Redirect kaynak hatası: {e}")
-        
-    return base_url, matches_url, channels_url
+        print(f"⚠️ Domain API hatası: {e}")
+    
+    parsed = urlparse(MATCHES_API_URL)
+    base_url = f"{parsed.scheme}://{parsed.netloc}/"
+    print(f"⚠️ Varsayılan base URL: {base_url}")
+    return base_url
+
+def get_referrer_with_fallback():
+    """Referrer adresini al"""
+    try:
+        parsed = urlparse(MATCHES_API_URL)
+        referrer = f"{parsed.scheme}://{parsed.netloc}"
+        return referrer
+    except:
+        return "https://canlimacizlejustin.online"
 
 def parse_matches_from_html(html_content):
+    """Maçları HTML'den parse et - İKİ LOGO DA ÇEKİLİYOR"""
     matches = []
     soup = BeautifulSoup(html_content, 'html.parser')
     match_links = soup.find_all('a', class_='single-match')
-    print(f"🔍 Parse edilen maç linki sayısı: {len(match_links)}")
     
     for link in match_links:
         try:
             href = link.get('href', '')
             channel_id = href.replace('channel?id=', '') if 'channel?id=' in href else None
-            imgs = link.find_all('img')
             
+            imgs = link.find_all('img')
             home_logo = imgs[0].get('src') if len(imgs) > 0 else ''
             away_logo = imgs[1].get('src') if len(imgs) > 1 else ''
             
@@ -111,13 +112,14 @@ def parse_matches_from_html(html_content):
                     })
         except Exception as e:
             continue
+            
     return matches
 
 def parse_channels_from_html(html_content):
+    """Sabit kanalları HTML'den parse et"""
     channels = []
     soup = BeautifulSoup(html_content, 'html.parser')
     channel_links = soup.find_all('a', class_='single-match')
-    print(f"🔍 Parse edilen kanal linki sayısı: {len(channel_links)}")
     
     for link in channel_links:
         try:
@@ -145,76 +147,90 @@ def parse_channels_from_html(html_content):
                                 'type': 'static',
                                 'source': 'channel'
                             })
-        except Exception:
+        except Exception as e:
             continue
+            
     return channels
 
-@app.get("/")
-def home():
-    return {"status": "online", "endpoints": ["/playlist.m3u", "/detay.json"]}
-
-@app.get("/playlist.m3u")
-def generate_m3u():
-    base_url, matches_url, channels_url = get_dynamic_urls()
-    
-    all_matches = []
-    all_channels = []
-    
-    try:
-        r = requests.get(matches_url, headers=HEADERS, timeout=15, verify=False)
-        print(f"📡 Matches API ({matches_url}) Status: {r.status_code}, Boyut: {len(r.text)}")
-        all_matches = parse_matches_from_html(r.text)
-    except Exception as e:
-        print(f"❌ Matches API Hatası: {e}")
-        
-    try:
-        r = requests.get(channels_url, headers=HEADERS, timeout=15, verify=False)
-        print(f"📡 Channels API ({channels_url}) Status: {r.status_code}, Boyut: {len(r.text)}")
-        all_channels = parse_channels_from_html(r.text)
-    except Exception as e:
-        print(f"❌ Channels API Hatası: {e}")
-        
+def create_m3u_with_logos(matches, channels, base_url, referrer):
+    """M3U playlist oluştur - tvg-logo olarak main_logo kullan"""
     m3u_list = ["#EXTM3U"]
     
-    for match in all_matches:
+    for match in matches:
         group = f"CANLI MAÇLAR - {match['league']}"
         extinf = f'#EXTINF:-1 tvg-logo="{match["main_logo"]}" group-title="{group}",{match["name"]}'
+        
         m3u_list.append(extinf)
         m3u_list.append(f'#EXTVLCOPT:http-user-agent={HEADERS["User-Agent"]}')
-        m3u_list.append(f'#EXTVLCOPT:http-referrer={base_url}')
+        m3u_list.append(f'#EXTVLCOPT:http-referrer={referrer}/')
         m3u_list.append(f'{base_url}{match["id"]}/mono.m3u8')
         
-    for channel in all_channels:
+    for channel in channels:
         extinf = f'#EXTINF:-1 tvg-logo="{channel["logo"]}" group-title="7/24 KANALLAR",{channel["name"]}'
         m3u_list.append(extinf)
         m3u_list.append(f'#EXTVLCOPT:http-user-agent={HEADERS["User-Agent"]}')
-        m3u_list.append(f'#EXTVLCOPT:http-referrer={base_url}')
+        m3u_list.append(f'#EXTVLCOPT:http-referrer={referrer}/')
         m3u_list.append(f'{base_url}{channel["id"]}/mono.m3u8')
         
-    return Response(content="\n".join(m3u_list), media_type="audio/x-mpegurl")
+    return m3u_list
 
-@app.get("/detay.json")
-def generate_json():
-    _, matches_url, channels_url = get_dynamic_urls()
+@app.get("/")
+def home():
+    return {
+        "status": "online", 
+        "endpoints": {
+            "playlist": "/playlist.m3u",
+            "detaylar": "/detay.json"
+        }
+    }
+
+@app.get("/playlist.m3u")
+def get_playlist():
+    base_url = get_base_url_with_fallback()
+    referrer = get_referrer_with_fallback()
+    
     all_matches = []
     all_channels = []
     
     try:
-        r = requests.get(matches_url, headers=HEADERS, timeout=15, verify=False)
+        r = requests.get(MATCHES_API_URL, headers=HEADERS, timeout=15, verify=False)
         all_matches = parse_matches_from_html(r.text)
     except Exception as e:
-        print(f"❌ JSON Matches Hatası: {e}")
+        print(f"⚠️ Maç hatası: {e}")
         
     try:
-        r = requests.get(channels_url, headers=HEADERS, timeout=15, verify=False)
+        r = requests.get(CHANNELS_API_URL, headers=HEADERS, timeout=15, verify=False)
         all_channels = parse_channels_from_html(r.text)
     except Exception as e:
-        print(f"❌ JSON Channels Hatası: {e}")
+        print(f"⚠️ Kanal hatası: {e}")
         
-    return {
+    m3u_list = create_m3u_with_logos(all_matches, all_channels, base_url, referrer)
+    m3u_content = "\n".join(m3u_list)
+    
+    return Response(content=m3u_content, media_type="audio/x-mpegurl")
+
+@app.get("/detay.json")
+def get_details():
+    all_matches = []
+    all_channels = []
+    
+    try:
+        r = requests.get(MATCHES_API_URL, headers=HEADERS, timeout=15, verify=False)
+        all_matches = parse_matches_from_html(r.text)
+    except Exception as e:
+        pass
+        
+    try:
+        r = requests.get(CHANNELS_API_URL, headers=HEADERS, timeout=15, verify=False)
+        all_channels = parse_channels_from_html(r.text)
+    except Exception as e:
+        pass
+        
+    data = {
         'matches': all_matches,
         'channels': all_channels,
         'total_matches': len(all_matches),
         'total_channels': len(all_channels),
         'total_broadcasts': len(all_matches) + len(all_channels)
     }
+    return data
