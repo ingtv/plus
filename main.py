@@ -1,20 +1,21 @@
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Response, HTTPException
 import cloudscraper
 import urllib3
 import json
 import re
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, urljoin
+import requests
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-app = FastAPI(title="Justin M3U Generator", version="15.0")
+app = FastAPI(title="Justin M3U Proxy Generator", version="16.0")
 
 DOMAIN_API_URL = "https://data-reality.com/domain.php"
 MATCHES_API_URL = "https://data-reality.com/matches.php"
 AMP_INDEX_URL = "https://raw.githubusercontent.com/eniyiyayinci/taraftarium-amp/refs/heads/main/index.html"
 
-# Sabit kanalları doğrudan buraya gömdük (istediğin zaman elle güncelleyebilirsin)
+# Sabit kanallar
 STATIC_CHANNELS_HTML = """
 <a class="single-match show " href="channel?id=zirve" data-matchtype="Zirve" target="macth-video">
 <img src="img/tv.png" style="border-radius:0px !important;" width="20" height="20" loading="lazy">
@@ -422,8 +423,6 @@ def parse_matches_from_html(html_content):
                         'name': channel_name,
                         'home': home,
                         'away': away,
-                        'home_logo': home_logo,
-                        'away_logo': away_logo,
                         'main_logo': main_logo,
                         'league': league,
                         'type': match_type.lower(),
@@ -453,7 +452,6 @@ def parse_channels_from_html(html_content):
                     
                     away_div = teams_div.find('div', class_='away')
                     logo_img = away_div.find('img') if away_div else None
-                    # Logo yolunu düzeltmek gerekirse stream_base ile birleştirebiliriz veya direkt alabiliriz
                     logo_url = logo_img.get('src') if logo_img else ''
                     if logo_url and not logo_url.startswith('http'):
                         logo_url = f"https://data-reality.com/{logo_url}"
@@ -474,17 +472,56 @@ def parse_channels_from_html(html_content):
 def home():
     return {"status": "online", "endpoints": ["/playlist.m3u", "/detay.json"]}
 
+# 🔥 PROXY ENDPOINT: ExoPlayer doğrudan buraya bağlanacak, sunucumuz arkada her şeyi çözecek!
+@app.get("/proxy/{channel_id}/{file_name}")
+def proxy_stream(channel_id: str, file_name: str, request: fastapi.Request = None):
+    player_base = get_dynamic_player_base()
+    stream_base_url = get_stream_base_url(player_base)
+    target_url = f"{stream_base_url}{channel_id}/{file_name}"
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Referer": player_base,
+        "Origin": player_base.rstrip('/')
+    }
+    
+    try:
+        # Eğer istek .m3u8 dosyası ise içeriğini çekip içindeki linkleri de proxy üzerinden yönlendirelim
+        if file_name.endswith('.m3u8'):
+            resp = requests.get(target_url, headers=headers, timeout=10)
+            content = resp.text
+            # m3u8 içindeki segment (ts/m4s) linklerini de proxy'ye yönlendir
+            base_proxy_url = f"{request.base_url}proxy/{channel_id}/"
+            
+            lines = content.splitlines()
+            new_lines = []
+            for line in lines:
+                if line and not line.startswith('#'):
+                    if not line.startswith('http'):
+                        line = base_proxy_url + line
+                    else:
+                        # Eğer tam URL ise onu da proxy'den geçirebiliriz veya direkt bırakabiliriz
+                        pass
+                new_lines.append(line)
+            
+            return Response(content="\n".join(new_lines), media_type="application/vnd.apple.mpegurl")
+        
+        # Eğer parça dosyası (.ts, .m4s vb.) ise direkt stream olarak aktar
+        req = requests.get(target_url, headers=headers, stream=True, timeout=10)
+        return Response(content=req.content, status_code=req.status_code, media_type=req.headers.get("content-type"))
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/playlist.m3u")
-def generate_m3u():
+def generate_m3u(request: fastapi.Request):
     scraper = cloudscraper.create_scraper()
     player_base = get_dynamic_player_base()
-    headers = get_api_headers(player_base)
-    stream_base_url = get_stream_base_url(player_base)
     
     all_matches = []
-    # Sabit kanalları doğrudan gömdüğümüz HTML'den parse ediyoruz
     all_channels = parse_channels_from_html(STATIC_CHANNELS_HTML)
     
+    headers = get_api_headers(player_base)
     try:
         r = scraper.get(MATCHES_API_URL, headers=headers, timeout=15)
         all_matches = parse_matches_from_html(r.text)
@@ -492,46 +529,18 @@ def generate_m3u():
         print(f"⚠️ Maç hatası: {e}")
         
     m3u_list = ["#EXTM3U"]
+    base_url = str(request.base_url).rstrip('/')
     
     for match in all_matches:
         group = f"CANLI MAÇLAR - {match['league']}"
         extinf = f'#EXTINF:-1 tvg-logo="{match["main_logo"]}" group-title="{group}",{match["name"]}'
         m3u_list.append(extinf)
-        m3u_list.append(f'#EXTVLCOPT:http-user-agent={headers["User-Agent"]}')
-        m3u_list.append(f'#EXTVLCOPT:http-referrer={player_base}')
-        m3u_list.append(f'{stream_base_url}{match["id"]}/mono.m3u8')
+        # ExoPlayer için tertemiz proxy linki (Hiçbir ek ayar gerektirmez)
+        m3u_list.append(f'{base_url}/proxy/{match["id"]}/mono.m3u8')
         
     for channel in all_channels:
         extinf = f'#EXTINF:-1 tvg-logo="{channel["logo"]}" group-title="7/24 KANALLAR",{channel["name"]}'
         m3u_list.append(extinf)
-        m3u_list.append(f'#EXTVLCOPT:http-user-agent={headers["User-Agent"]}')
-        m3u_list.append(f'#EXTVLCOPT:http-referrer={player_base}')
-        m3u_list.append(f'{stream_base_url}{channel["id"]}/mono.m3u8')
+        m3u_list.append(f'{base_url}/proxy/{channel["id"]}/mono.m3u8')
         
     return Response(content="\n".join(m3u_list), media_type="audio/x-mpegurl")
-
-@app.get("/detay.json")
-def generate_json():
-    scraper = cloudscraper.create_scraper()
-    player_base = get_dynamic_player_base()
-    headers = get_api_headers(player_base)
-    stream_base_url = get_stream_base_url(player_base)
-    
-    all_matches = []
-    all_channels = parse_channels_from_html(STATIC_CHANNELS_HTML)
-    
-    try:
-        r = scraper.get(MATCHES_API_URL, headers=headers, timeout=15)
-        all_matches = parse_matches_from_html(r.text)
-    except Exception as e:
-        print(f"⚠️ JSON Maç hatası: {e}")
-        
-    return {
-        'player_base': player_base,
-        'stream_base': stream_base_url,
-        'matches': all_matches,
-        'channels': all_channels,
-        'total_matches': len(all_matches),
-        'total_channels': len(all_channels),
-        'total_broadcasts': len(all_matches) + len(all_channels)
-    }
