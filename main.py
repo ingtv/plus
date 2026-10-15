@@ -8,40 +8,58 @@ from urllib.parse import urlparse, urljoin
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-app = FastAPI(title="Justin M3U Generator", version="11.0")
+app = FastAPI(title="Justin M3U Generator", version="12.0")
 
+# Orijinal API Kaynakları
 DOMAIN_API_URL = "https://data-reality.com/domain.php"
+MATCHES_API_URL = "https://data-reality.com/matches.php"
+CHANNELS_API_URL = "https://data-reality.com/channels.php"
+
+# Player base'i bulacağımız kaynak
 AMP_INDEX_URL = "https://raw.githubusercontent.com/eniyiyayinci/taraftarium-amp/refs/heads/main/index.html"
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Referer": "https://canlimacizlejustin.online/"
-}
-
 def get_dynamic_player_base():
+    """gettotv56.com gibi sürekli değişen player adresini otomatik bulur"""
     scraper = cloudscraper.create_scraper()
     player_base = "https://gettotv56.com/"
+    
     try:
-        r_idx = scraper.get(AMP_INDEX_URL, headers=HEADERS, timeout=10)
+        r_idx = scraper.get(AMP_INDEX_URL, timeout=10)
         if r_idx.status_code == 200:
             found_urls = re.findall(r'https?://[^\s<>"]+gettotv[^\s<>"]*', r_idx.text)
             if found_urls:
                 parsed = urlparse(found_urls[0])
                 if parsed.netloc:
                     player_base = f"{parsed.scheme}://{parsed.netloc}/"
+                    print(f"✅ Dinamik Player Base yakalandı: {player_base}")
                     return player_base
     except Exception as e:
         print(f"⚠️ Player base çözme hatası: {e}")
+        
     return player_base
 
-def get_stream_base_url():
+def get_api_headers(player_base):
+    """Loglarda yakaladığımız gibi Origin ve Referer değerlerini dinamik player base'e ayarlar"""
+    return {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Referer": player_base,
+        "Origin": player_base.rstrip('/'),
+        "Accept": "*/*",
+        "Accept-Language": "tr,en;q=0.9",
+        "Sec-Fetch-Site": "cross-site",
+        "Sec-Fetch-Mode": "cors"
+    }
+
+def get_stream_base_url(player_base):
     scraper = cloudscraper.create_scraper()
+    headers = get_api_headers(player_base)
     try:
-        r = scraper.get(DOMAIN_API_URL, headers=HEADERS, timeout=10)
+        r = scraper.get(DOMAIN_API_URL, headers=headers, timeout=10)
         data = r.json()
         base_url = data.get("baseurl", "")
         if base_url:
             base_url = base_url.replace("\\", "").rstrip('/')
+            print(f"✅ Domain API'den stream base alındı: {base_url}")
             return base_url + "/"
     except Exception as e:
         print(f"⚠️ Domain API hatası: {e}")
@@ -157,22 +175,22 @@ def home():
 def generate_m3u():
     scraper = cloudscraper.create_scraper()
     player_base = get_dynamic_player_base()
-    stream_base_url = get_stream_base_url()
-    
-    matches_api = urljoin(stream_base_url, "matches.php")
-    channels_api = urljoin(stream_base_url, "channels.php")
+    headers = get_api_headers(player_base)
+    stream_base_url = get_stream_base_url(player_base)
     
     all_matches = []
     all_channels = []
     
     try:
-        r = scraper.get(matches_api, headers=HEADERS, timeout=15)
+        r = scraper.get(MATCHES_API_URL, headers=headers, timeout=15)
+        print(f"📡 Matches API Status: {r.status_code}")
         all_matches = parse_matches_from_html(r.text)
     except Exception as e:
         print(f"⚠️ Maç hatası: {e}")
         
     try:
-        r = scraper.get(channels_api, headers=HEADERS, timeout=15)
+        r = scraper.get(CHANNELS_API_URL, headers=headers, timeout=15)
+        print(f"📡 Channels API Status: {r.status_code}")
         all_channels = parse_channels_from_html(r.text)
     except Exception as e:
         print(f"⚠️ Kanal hatası: {e}")
@@ -183,14 +201,14 @@ def generate_m3u():
         group = f"CANLI MAÇLAR - {match['league']}"
         extinf = f'#EXTINF:-1 tvg-logo="{match["main_logo"]}" group-title="{group}",{match["name"]}'
         m3u_list.append(extinf)
-        m3u_list.append(f'#EXTVLCOPT:http-user-agent={HEADERS["User-Agent"]}')
+        m3u_list.append(f'#EXTVLCOPT:http-user-agent={headers["User-Agent"]}')
         m3u_list.append(f'#EXTVLCOPT:http-referrer={player_base}')
         m3u_list.append(f'{stream_base_url}{match["id"]}/mono.m3u8')
         
     for channel in all_channels:
         extinf = f'#EXTINF:-1 tvg-logo="{channel["logo"]}" group-title="7/24 KANALLAR",{channel["name"]}'
         m3u_list.append(extinf)
-        m3u_list.append(f'#EXTVLCOPT:http-user-agent={HEADERS["User-Agent"]}')
+        m3u_list.append(f'#EXTVLCOPT:http-user-agent={headers["User-Agent"]}')
         m3u_list.append(f'#EXTVLCOPT:http-referrer={player_base}')
         m3u_list.append(f'{stream_base_url}{channel["id"]}/mono.m3u8')
         
@@ -200,22 +218,20 @@ def generate_m3u():
 def generate_json():
     scraper = cloudscraper.create_scraper()
     player_base = get_dynamic_player_base()
-    stream_base_url = get_stream_base_url()
-    
-    matches_api = urljoin(stream_base_url, "matches.php")
-    channels_api = urljoin(stream_base_url, "channels.php")
+    headers = get_api_headers(player_base)
+    stream_base_url = get_stream_base_url(player_base)
     
     all_matches = []
     all_channels = []
     
     try:
-        r = scraper.get(matches_api, headers=HEADERS, timeout=15)
+        r = scraper.get(MATCHES_API_URL, headers=headers, timeout=15)
         all_matches = parse_matches_from_html(r.text)
     except Exception as e:
         print(f"⚠️ JSON Maç hatası: {e}")
         
     try:
-        r = scraper.get(channels_api, headers=HEADERS, timeout=15)
+        r = scraper.get(CHANNELS_API_URL, headers=headers, timeout=15)
         all_channels = parse_channels_from_html(r.text)
     except Exception as e:
         print(f"⚠️ JSON Kanal hatası: {e}")
