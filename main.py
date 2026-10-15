@@ -8,16 +8,21 @@ from urllib.parse import urlparse, urljoin
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-app = FastAPI(title="Justin M3U Generator", version="13.0")
+app = FastAPI(title="Justin M3U Generator", version="14.0")
 
+# Orijinal Sabit API Kaynakları
 DOMAIN_API_URL = "https://data-reality.com/domain.php"
 MATCHES_API_URL = "https://data-reality.com/matches.php"
 CHANNELS_API_URL = "https://data-reality.com/channels.php"
+
+# Player base domainini otomatik bulacağımız kaynak
 AMP_INDEX_URL = "https://raw.githubusercontent.com/eniyiyayinci/taraftarium-amp/refs/heads/main/index.html"
 
 def get_dynamic_player_base():
+    """gettotv56.com gibi sürekli değişen player adresini otomatik bulur"""
     scraper = cloudscraper.create_scraper()
     player_base = "https://gettotv56.com/"
+    
     try:
         r_idx = scraper.get(AMP_INDEX_URL, timeout=10)
         if r_idx.status_code == 200:
@@ -26,10 +31,10 @@ def get_dynamic_player_base():
                 parsed = urlparse(found_urls[0])
                 if parsed.netloc:
                     player_base = f"{parsed.scheme}://{parsed.netloc}/"
-                    print(f"✅ Dinamik Player Base yakalandı: {player_base}")
                     return player_base
     except Exception as e:
         print(f"⚠️ Player base çözme hatası: {e}")
+        
     return player_base
 
 def get_api_headers(player_base):
@@ -48,7 +53,6 @@ def get_stream_base_url(player_base):
     headers = get_api_headers(player_base)
     try:
         r = scraper.get(DOMAIN_API_URL, headers=headers, timeout=10)
-        print(f"📡 Domain API Status: {r.status_code}, Yanıt: {r.text[:100]}")
         data = r.json()
         base_url = data.get("baseurl", "")
         if base_url:
@@ -62,13 +66,13 @@ def parse_matches_from_html(html_content):
     matches = []
     soup = BeautifulSoup(html_content, 'html.parser')
     match_links = soup.find_all('a', class_='single-match')
-    print(f"🔍 Parse edilen maç linki sayısı: {len(match_links)}")
     
     for link in match_links:
         try:
             href = link.get('href', '')
             channel_id = href.replace('channel?id=', '') if 'channel?id=' in href else None
             
+            # Paylaştığın yapıya göre resimler (Ev sahibi ve deplasman logoları)
             imgs = link.find_all('img')
             home_logo = imgs[0].get('src') if len(imgs) > 0 else ''
             away_logo = imgs[1].get('src') if len(imgs) > 1 else ''
@@ -128,7 +132,6 @@ def parse_channels_from_html(html_content):
     channels = []
     soup = BeautifulSoup(html_content, 'html.parser')
     match_links = soup.find_all('a', class_='single-match')
-    print(f"🔍 Parse edilen kanal linki sayısı: {len(match_links)}")
     
     for link in match_links:
         try:
@@ -138,12 +141,14 @@ def parse_channels_from_html(html_content):
             detail_div = link.find('div', class_='match-detail')
             if detail_div:
                 event_div = detail_div.find('div', class_='event')
+                # 7/24 kanalları veya Zirve kanallarını yakala
                 if event_div and ('7/24' in event_div.text or link.get('data-matchtype') == 'Zirve'):
                     teams_div = detail_div.find('div', class_='teams')
                     if teams_div:
                         home_div = teams_div.find('div', class_='home')
                         channel_name = home_div.text.strip() if home_div else ''
                         
+                        # Kanal logosu away div içerisindeki img'den alınır
                         away_div = teams_div.find('div', class_='away')
                         logo_img = away_div.find('img') if away_div else None
                         logo_url = logo_img.get('src') if logo_img else ''
@@ -176,14 +181,12 @@ def generate_m3u():
     
     try:
         r = scraper.get(MATCHES_API_URL, headers=headers, timeout=15)
-        print(f"📡 Matches API Status: {r.status_code}, Boyut: {len(r.text)}")
         all_matches = parse_matches_from_html(r.text)
     except Exception as e:
         print(f"⚠️ Maç hatası: {e}")
         
     try:
         r = scraper.get(CHANNELS_API_URL, headers=headers, timeout=15)
-        print(f"📡 Channels API Status: {r.status_code}, Boyut: {len(r.text)}")
         all_channels = parse_channels_from_html(r.text)
     except Exception as e:
         print(f"⚠️ Kanal hatası: {e}")
@@ -219,14 +222,12 @@ def generate_json():
     
     try:
         r = scraper.get(MATCHES_API_URL, headers=headers, timeout=15)
-        print(f"📡 JSON Matches Status: {r.status_code}, Boyut: {len(r.text)}")
         all_matches = parse_matches_from_html(r.text)
     except Exception as e:
         print(f"⚠️ JSON Maç hatası: {e}")
         
     try:
         r = scraper.get(CHANNELS_API_URL, headers=headers, timeout=15)
-        print(f"📡 JSON Channels Status: {r.status_code}, Boyut: {len(r.text)}")
         all_channels = parse_channels_from_html(r.text)
     except Exception as e:
         print(f"⚠️ JSON Kanal hatası: {e}")
