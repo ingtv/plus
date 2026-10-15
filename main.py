@@ -1,169 +1,238 @@
+from fastapi import FastAPI, Response
+import requests
+import urllib3
+import json
 import re
-from datetime import datetime
-from httpx import Client
+from bs4 import BeautifulSoup
+from urllib.parse import urlparse, urljoin
 
-# ---------------- Dengetv54 ----------------
-class Dengetv54Manager:
-    def __init__(self):
-        self.httpx = Client(timeout=10, verify=False)
-        self.base_stream_url = None  # Dinamik alınacak
-        self.channel_files = {
-            1: "yayinzirve.m3u8",
-            2: "yayin1.m3u8",
-            3: "yayininat.m3u8",
-            4: "yayinb2.m3u8",
-            5: "yayinb3.m3u8",
-            6: "yayinb4.m3u8",
-            7: "yayinb5.m3u8",
-            8: "yayinbm1.m3u8",
-            9: "yayinbm2.m3u8",
-            10: "yayinss.m3u8",
-            11: "yayinss2.m3u8",
-            13: "yayint1.m3u8",
-            14: "yayint2.m3u8",
-            15: "yayint3.m3u8",
-            16: "yayinsmarts.m3u8",
-            17: "yayinsms2.m3u8",
-            18: "yayintrtspor.m3u8",
-            19: "yayintrtspor2.m3u8",
-            20: "yayintrt1.m3u8",
-            21: "yayinas.m3u8",
-            22: "yayinatv.m3u8",
-            23: "yayintv8.m3u8",
-            24: "yayintv85.m3u8",
-            25: "yayinf1.m3u8",
-            26: "yayinnbatv.m3u8",
-            27: "yayineu1.m3u8",
-            28: "yayineu2.m3u8",
-            29: "yayinex1.m3u8",
-            30: "yayinex2.m3u8",
-            31: "yayinex3.m3u8",
-            32: "yayinex4.m3u8",
-            33: "yayinex5.m3u8",
-            34: "yayinex6.m3u8",
-            35: "yayinex7.m3u8",
-            36: "yayinex8.m3u8"
-        }
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-    def find_working_domain(self):
-        headers = {"User-Agent": "Mozilla/5.0"}
-        for i in range(54, 105):
-            url = f"https://gettotv{i}.com/"
-            try:
-                r = self.httpx.get(url, headers=headers)
-                if r.status_code == 200 and r.text.strip():
-                    # HTML içinden zirvedesinX.cfd domainini yakala
-                    match = re.search(r"https://[a-z0-9\-\.]*zirvestream\d+\.cfd", r.text)
-                    if match:
-                        self.base_stream_url = match.group(0) + "/"
-                        return url
-            except:
+app = FastAPI(title="Justin M3U Generator", version="9.0")
+
+# Sabit API Kaynakları
+DOMAIN_API_URL = "https://data-reality.com/domain.php"
+MATCHES_API_URL = "https://data-reality.com/matches.php"
+CHANNELS_API_URL = "https://data-reality.com/channels.php"
+
+# Güncel gettotv domainini bulmak için baz alacağımız kaynak (Amp/Sitemap veya index)
+AMP_INDEX_URL = "https://raw.githubusercontent.com/eniyiyayinci/taraftarium-amp/refs/heads/main/index.html"
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Referer": "https://canlimacizlejustin.online/"
+}
+
+def get_dynamic_player_base():
+    """gettotv56.com gibi sürekli değişen rakamlı domaini otomatik çözer"""
+    player_base = "https://gettotv56.com/"
+    
+    try:
+        # Önce domain.php'den gelen baseurl'i deneyelim
+        r = requests.get(DOMAIN_API_URL, headers=HEADERS, timeout=10, verify=False)
+        data = r.json()
+        base_url = data.get("baseurl", "").replace("\\", "").rstrip('/')
+        if base_url:
+            print(f"✅ Domain API'den base URL alındı: {base_url}")
+            # Eğer domain içinde gettotv yapısı varsa onu baz alabiliriz veya doğrudan kullanabiliriz.
+            
+        # GitHub index kaynağındaki güncel gettotv linkini regex ile yakala (örn: gettotv56.com)
+        r_idx = requests.get(AMP_INDEX_URL, headers=HEADERS, timeout=10, verify=False)
+        if r_idx.status_code == 200:
+            found_urls = re.findall(r'https?://[^\s<>"]+gettotv[^\s<>"]*', r_idx.text)
+            if found_urls:
+                parsed = urlparse(found_urls[0])
+                if parsed.netloc:
+                    player_base = f"{parsed.scheme}://{parsed.netloc}/"
+                    print(f"✅ Otomatik yakalanan Player Base URL: {player_base}")
+                    return player_base
+                    
+    except Exception as e:
+        print(f"⚠️ Dinamik player base çözme hatası: {e}, varsayılan kullanılıyor.")
+        
+    return player_base
+
+def get_base_url_with_fallback():
+    try:
+        r = requests.get(DOMAIN_API_URL, headers=HEADERS, timeout=10, verify=False)
+        data = r.json()
+        base_url = data.get("baseurl", "")
+        if base_url:
+            base_url = base_url.replace("\\", "").rstrip('/')
+            return base_url + "/"
+    except Exception as e:
+        pass
+    return "https://5ln.zirvedesin244.cfd/"
+
+def parse_matches_from_html(html_content):
+    matches = []
+    soup = BeautifulSoup(html_content, 'html.parser')
+    match_links = soup.find_all('a', class_='single-match')
+    
+    for link in match_links:
+        try:
+            href = link.get('href', '')
+            channel_id = href.replace('channel?id=', '') if 'channel?id=' in href else None
+            
+            imgs = link.find_all('img')
+            home_logo = imgs[0].get('src') if len(imgs) > 0 else ''
+            away_logo = imgs[1].get('src') if len(imgs) > 1 else ''
+            
+            detail_div = link.find('div', class_='match-detail')
+            if not detail_div:
                 continue
-        # fallback (hiç bulunamazsa)
-        self.base_stream_url = "https://four.zirvestream5.cfd/"
-        return "https://dengetv54.live/"
+                
+            date_div = detail_div.find('div', class_='date')
+            match_type = date_div.text.strip() if date_div else 'futbol'
+            
+            event_div = detail_div.find('div', class_='event')
+            event_text = event_div.text.strip() if event_div else ''
+            
+            time = ''
+            league = ''
+            if '|' in event_text:
+                parts = event_text.split('|')
+                time = parts[0].strip()
+                league = parts[1].strip()
+            else:
+                league = event_text
+            
+            teams_div = detail_div.find('div', class_='teams')
+            if teams_div:
+                home_team = teams_div.find('div', class_='home')
+                away_team = teams_div.find('div', class_='away')
+                
+                home = home_team.text.strip() if home_team else ''
+                away = away_team.text.strip() if away_team else ''
+                
+                if channel_id and home and away:
+                    channel_name = f"{home} - {away}"
+                    if time:
+                        channel_name += f" [{time}]"
+                    
+                    main_logo = home_logo or away_logo or ""
+                    
+                    matches.append({
+                        'id': channel_id,
+                        'name': channel_name,
+                        'home': home,
+                        'away': away,
+                        'home_logo': home_logo,
+                        'away_logo': away_logo,
+                        'main_logo': main_logo,
+                        'league': league,
+                        'type': match_type.lower(),
+                        'time': time,
+                        'source': 'match'
+                    })
+        except Exception:
+            continue
+    return matches
 
-    def build_m3u8_content(self, referer_url):
-        if not self.base_stream_url:
-            raise ValueError("Dengetv54: Base stream URL bulunamadı!")
-        m3u = []
-        for _, file_name in self.channel_files.items():
-            channel_name = file_name.replace(".m3u8", "").capitalize()
-            m3u.append(f'#EXTINF:-1 group-title="Dengetv54",{channel_name}')
-            m3u.append('#EXTVLCOPT:http-user-agent=Mozilla/5.0')
-            m3u.append(f'#EXTVLCOPT:http-referrer={referer_url}')
-            m3u.append(f'{self.base_stream_url}{file_name}')
-        return "\n".join(m3u)
+def parse_channels_from_html(html_content):
+    channels = []
+    soup = BeautifulSoup(html_content, 'html.parser')
+    channel_links = soup.find_all('a', class_='single-match')
+    
+    for link in channel_links:
+        try:
+            href = link.get('href', '')
+            channel_id = href.replace('channel?id=', '') if 'channel?id=' in href else None
+            
+            detail_div = link.find('div', class_='match-detail')
+            if detail_div:
+                event_div = detail_div.find('div', class_='event')
+                if event_div and '7/24' in event_div.text:
+                    teams_div = detail_div.find('div', class_='teams')
+                    if teams_div:
+                        home_div = teams_div.find('div', class_='home')
+                        channel_name = home_div.text.strip() if home_div else ''
+                        
+                        away_div = teams_div.find('div', class_='away')
+                        logo_img = away_div.find('img') if away_div else None
+                        logo_url = logo_img.get('src') if logo_img else ''
+                        
+                        if channel_id and channel_name:
+                            channels.append({
+                                'id': channel_id,
+                                'name': channel_name,
+                                'logo': logo_url,
+                                'type': 'static',
+                                'source': 'channel'
+                            })
+        except Exception:
+            continue
+    return channels
 
-    def calistir(self):
-        referer = self.find_working_domain()
-        m3u = self.build_m3u8_content(referer)
-        print(f"Dengetv54: içerik uzunluğu {len(m3u)}")
-        return m3u
+@app.get("/")
+def home():
+    return {"status": "online", "endpoints": ["/playlist.m3u", "/detay.json"]}
 
+@app.get("/playlist.m3u")
+def generate_m3u():
+    player_base = get_dynamic_player_base()
+    stream_base_url = get_base_url_with_fallback()
+    
+    all_matches = []
+    all_channels = []
+    
+    try:
+        r = requests.get(MATCHES_API_URL, headers=HEADERS, timeout=15, verify=False)
+        all_matches = parse_matches_from_html(r.text)
+    except Exception as e:
+        print(f"⚠️ Maç hatası: {e}")
+        
+    try:
+        r = requests.get(CHANNELS_API_URL, headers=HEADERS, timeout=15, verify=False)
+        all_channels = parse_channels_from_html(r.text)
+    except Exception as e:
+        print(f"⚠️ Kanal hatası: {e}")
+        
+    m3u_list = ["#EXTM3U"]
+    
+    for match in all_matches:
+        group = f"CANLI MAÇLAR - {match['league']}"
+        extinf = f'#EXTINF:-1 tvg-logo="{match["main_logo"]}" group-title="{group}",{match["name"]}'
+        m3u_list.append(extinf)
+        m3u_list.append(f'#EXTVLCOPT:http-user-agent={HEADERS["User-Agent"]}')
+        m3u_list.append(f'#EXTVLCOPT:http-referrer={player_base}')
+        m3u_list.append(f'{stream_base_url}{match["id"]}/mono.m3u8')
+        
+    for channel in all_channels:
+        extinf = f'#EXTINF:-1 tvg-logo="{channel["logo"]}" group-title="7/24 KANALLAR",{channel["name"]}'
+        m3u_list.append(extinf)
+        m3u_list.append(f'#EXTVLCOPT:http-user-agent={HEADERS["User-Agent"]}')
+        m3u_list.append(f'#EXTVLCOPT:http-referrer={player_base}')
+        m3u_list.append(f'{stream_base_url}{channel["id"]}/mono.m3u8')
+        
+    return Response(content="\n".join(m3u_list), media_type="audio/x-mpegurl")
 
-# ---------------- XYZsports ----------------
-class XYZsportsManager:
-    def __init__(self, channel_ids=None):
-        self.httpx = Client(timeout=10, verify=False)
-        self.channel_ids = channel_ids or [
-            "bein-sports-1", "bein-sports-2", "bein-sports-3",
-            "bein-sports-4", "bein-sports-5", "bein-sports-max-1",
-            "bein-sports-max-2", "smart-spor", "smart-spor-2",
-            "trt-spor", "trt-spor-2", "aspor", "s-sport",
-            "s-sport-2", "s-sport-plus-1", "s-sport-plus-2"
-        ]
-
-    def find_working_domain(self, start=248, end=350):
-        headers = {"User-Agent": "Mozilla/5.0"}
-        for i in range(start, end + 1):
-            url = f"https://www.xyzsports{i}.xyz/"
-            try:
-                r = self.httpx.get(url, headers=headers)
-                if r.status_code == 200 and "uxsyplayer" in r.text:
-                    return r.text, url
-            except:
-                continue
-        return None, None
-
-    def find_dynamic_player_domain(self, html):
-        m = re.search(r'https?://([a-z0-9\-]+\.[0-9a-z]+\.click)', html)
-        return f"https://{m.group(1)}" if m else None
-
-    def extract_base_stream_url(self, html):
-        m = re.search(r'this\.baseStreamUrl\s*=\s*[\'"]([^\'"]+)', html)
-        return m.group(1) if m else None
-
-    def build_m3u8_content(self, base_url, referer_url):
-        m3u = []
-        for cid in self.channel_ids:
-            channel_name = cid.replace("-", " ").title()
-            m3u.append(f'#EXTINF:-1 group-title="XYZSport",{channel_name}')
-            m3u.append('#EXTVLCOPT:http-user-agent=Mozilla/5.0')
-            m3u.append(f'#EXTVLCOPT:http-referrer={referer_url}')
-            m3u.append(f'{base_url}{cid}/playlist.m3u8')
-        return "\n".join(m3u)
-
-    def calistir(self):
-        html, referer_url = self.find_working_domain()
-        if not html:
-            print("XYZsports: Çalışan domain bulunamadı!")
-            return ""
-        player_domain = self.find_dynamic_player_domain(html)
-        if not player_domain:
-            print("XYZsports: Player domain bulunamadı!")
-            return ""
-        r = self.httpx.get(f"{player_domain}/index.php?id={self.channel_ids[0]}", headers={
-            "User-Agent": "Mozilla/5.0",
-            "Referer": referer_url
-        })
-        base_url = self.extract_base_stream_url(r.text)
-        if not base_url:
-            print("XYZsports: Base stream URL bulunamadı!")
-            return ""
-        return self.build_m3u8_content(base_url, referer_url)
-
-
-# ---------------- Main ----------------
-if __name__ == "__main__":
-    CIKTI_DOSYASI = "Birlesik.m3u"
-
-    all_m3u = ["#EXTM3U"]
-
-    # Dengetv54
-    dengetv = Dengetv54Manager()
-    all_m3u.append(dengetv.calistir())
-
-    # XYZsports
-    xyz = XYZsportsManager()
-    m3u_xyz = xyz.calistir()
-    if m3u_xyz:
-        all_m3u.append(m3u_xyz)
-
-    # Timestamp ekle
-    all_m3u.append(f'# Generated: {datetime.utcnow().isoformat()}')
-
-    with open(CIKTI_DOSYASI, "w", encoding="utf-8") as f:
-        f.write("\n".join(all_m3u))
-
-    print(f"✅ Birleşik M3U oluşturuldu: {CIKTI_DOSYASI}")
+@app.get("/detay.json")
+def generate_json():
+    player_base = get_dynamic_player_base()
+    stream_base_url = get_base_url_with_fallback()
+    
+    all_matches = []
+    all_channels = []
+    
+    try:
+        r = requests.get(MATCHES_API_URL, headers=HEADERS, timeout=15, verify=False)
+        all_matches = parse_matches_from_html(r.text)
+    except Exception:
+        pass
+        
+    try:
+        r = requests.get(CHANNELS_API_URL, headers=HEADERS, timeout=15, verify=False)
+        all_channels = parse_channels_from_html(r.text)
+    except Exception:
+        pass
+        
+    return {
+        'player_base': player_base,
+        'stream_base': stream_base_url,
+        'matches': all_matches,
+        'channels': all_channels,
+        'total_matches': len(all_matches),
+        'total_channels': len(all_channels),
+        'total_broadcasts': len(all_matches) + len(all_channels)
+    }
