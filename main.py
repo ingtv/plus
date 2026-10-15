@@ -1,15 +1,15 @@
 from fastapi import FastAPI, Response, HTTPException, Request
-from fastapi.responses import RedirectResponse
 import cloudscraper
 import urllib3
 import json
 import re
 from bs4 import BeautifulSoup
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
+import requests
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-app = FastAPI(title="Justin M3U Redirect Generator", version="17.0")
+app = FastAPI(title="Justin M3U Full Proxy Generator", version="18.0")
 
 DOMAIN_API_URL = "https://data-reality.com/domain.php"
 MATCHES_API_URL = "https://data-reality.com/matches.php"
@@ -474,15 +474,45 @@ def parse_channels_from_html(html_content):
 def home():
     return {"status": "online", "endpoints": ["/playlist.m3u"]}
 
-# 🔥 REDIRECT ENDPOINT: ExoPlayer buraya istek atacak, sunucumuz anında gerçek yayın adresine yönlendirecek!
-@app.get("/stream/{channel_id}")
-def stream_redirect(channel_id: str):
+# 🔥 ŞEFFAF FULL PROXY ENDPOINT: ExoPlayer'dan gelen m3u8 ve segment isteklerini header ekleyerek akıtır
+@app.get("/stream/{channel_id}/{file_path:path}")
+def proxy_full_stream(channel_id: str, file_path: str, request: Request):
     player_base = get_dynamic_player_base()
     stream_base_url = get_stream_base_url(player_base)
-    target_url = f"{stream_base_url}{channel_id}/mono.m3u8"
     
-    # Doğrudan HTTP 302 Yönlendirmesi (ExoPlayer ana sunucuya bağlanır)
-    return RedirectResponse(url=target_url, status_code=302)
+    target_url = f"{stream_base_url}{channel_id}/{file_path}"
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Referer": player_base,
+        "Origin": player_base.rstrip('/')
+    }
+    
+    try:
+        # Eğer istenen dosya bir .m3u8 playlist dosyası ise
+        if file_path.endswith('.m3u8') or '.m3u8' in file_path:
+            resp = requests.get(target_url, headers=headers, timeout=10)
+            content = resp.text
+            
+            # Playlist içindeki alt satırların yollarını bizim proxy endpoint'imize çevirelim
+            base_proxy_url = str(request.base_url) + f"stream/{channel_id}/"
+            
+            lines = content.splitlines()
+            new_lines = []
+            for line in lines:
+                if line and not line.startswith('#'):
+                    if not line.startswith('http'):
+                        line = base_proxy_url + line
+                new_lines.append(line)
+                
+            return Response(content="\n".join(new_lines), media_type="application/vnd.apple.mpegurl")
+        
+        # Eğer istenen dosya bir video parçası (.ts, .m4s vb.) veya anahtar dosyası ise akış olarak ilet
+        req = requests.get(target_url, headers=headers, stream=True, timeout=15)
+        return Response(content=req.content, status_code=req.status_code, media_type=req.headers.get("content-type"))
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/playlist.m3u")
 def generate_m3u(request: Request):
@@ -506,13 +536,11 @@ def generate_m3u(request: Request):
         group = f"CANLI MAÇLAR - {match['league']}"
         extinf = f'#EXTINF:-1 tvg-logo="{match["main_logo"]}" group-title="{group}",{match["name"]}'
         m3u_list.append(extinf)
-        # ExoPlayer için tertemiz redirect linki
-        m3u_list.append(f'{base_url}/stream/{match["id"]}')
+        m3u_list.append(f'{base_url}/stream/{match["id"]}/mono.m3u8')
         
     for channel in all_channels:
         extinf = f'#EXTINF:-1 tvg-logo="{channel["logo"]}" group-title="7/24 KANALLAR",{channel["name"]}'
         m3u_list.append(extinf)
-        # ExoPlayer için tertemiz redirect linki
-        m3u_list.append(f'{base_url}/stream/{channel["id"]}')
+        m3u_list.append(f'{base_url}/stream/{channel["id"]}/mono.m3u8')
         
     return Response(content="\n".join(m3u_list), media_type="audio/x-mpegurl")
